@@ -1,4 +1,6 @@
 import pickle
+import random
+import datetime
 
 import numpy as np
 
@@ -11,6 +13,7 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 
 from sklearn.metrics import confusion_matrix, precision_score, recall_score
+from sklearn.model_selection import train_test_split
 
 def blue(x): return '\033[94m' + x + '\033[0m'
 
@@ -71,10 +74,11 @@ class VoxelDataset(Dataset):
             # label_out = 0
 
         # Separating into Pair (10-19) and Compton (0-9)
-        if label_idx >= 10:
-            label_out = 1
-        else:
-            label_out = 0
+        # if label_idx >= 10:
+            # label_out = 1
+        # else:
+            # label_out = 0
+        label_out = label_idx
 
         # return tensor, self.label_map[label_idx]
         return tensor, label_out
@@ -324,6 +328,7 @@ def train_all(model, params, train_dataset, test_dataset):
             best_correct = curr_correct
             print("TODO SAVE MODEL, ncorrect =", best_correct)
             # torch.save(model.state_dict(), '%s/cls_model_%d.pth' % (outf, epoch))
+            torch.save(model.module.state_dict(), "test_torch_model.pth")
 
     
     cm_train = model_to_cm(model, device, train_loader)
@@ -386,8 +391,11 @@ def load_and_train():
     print("Starting PyTorch training...")
 
     print("Loading data...")
+    fn = '/data/slag2/njmille2/test_dataset_nhits12.pkl'
     with open(fn, 'rb') as f:
-        EventHits, EventTypes = pickle.load(f)
+        event_hits, event_types = pickle.load(f)
+
+    print(f"Dataset contains {len(event_hits)} events")
 
     #batch_size = 128
     batch_size = 400
@@ -411,35 +419,41 @@ def load_and_train():
 
     ranges = [xrange, yrange, zrange]
 
-    split = 0.8
-    
-    random.shuffle(shuffledHits)
-    random.shuffle(shuffledTypes)
 
-    ceil = math.ceil(len(EventHits)*split)
+    zipped = list(zip(event_hits, event_types))
+    random.shuffle(zipped)
+    shuffledHits, shuffledTypes = zip(*zipped)
+
+    # random.shuffle(event_hits)
+    # random.shuffle(event_types)
+
+    split = 0.9
+    ceil = np.ceil(len(event_hits)*split).astype(int)
     EventTypesTrain = shuffledTypes[:ceil]
     EventTypesTest = shuffledTypes[ceil:]
     EventHitsTrain = shuffledHits[:ceil]
     EventHitsTest = shuffledHits[ceil:]
 
-    train_dataset = tm.VoxelDataset(EventHitsTrain, EventTypesTrain, dims, ranges)
-    test_dataset = tm.VoxelDataset(EventHitsTest, EventTypesTest, dims, ranges)
+    print(f"Train: {len(EventTypesTrain)}, Test: {len(EventTypesTest)}")
 
-    nclasses = train_dataset2.nlabels
+    train_dataset = VoxelDataset(EventHitsTrain, EventTypesTrain, dims, ranges)
+    test_dataset = VoxelDataset(EventHitsTest, EventTypesTest, dims, ranges)
 
     print("Initializing PyTorch version of VoxNet...")
-    nclasses = 2
-    model = tm.VoxNet(num_classes=nclasses, input_shape=(110, 110, 48))
+    nclasses = train_dataset.nlabels
+    print("Nclasses = ", nclasses)
+    # nclasses = 2
+    model = VoxNet(num_classes=nclasses, input_shape=(XBins, YBins, ZBins))
 
     time0 = datetime.datetime.now()
-    # tm.train(model, params, train_dataset2, test_dataset2)
-    tm.train_all(model, params, train_dataset, test_dataset)
+    train_all(model, params, train_dataset, test_dataset)
     time1 = datetime.datetime.now()
     print("Time to run:", time1-time0)
 
 if __name__ == "__main__":
-    voxnet = VoxNet()
-    data = torch.rand([256, 1, 32, 32, 32])
-    test_out = voxnet(data)
+    load_and_train()
+    # voxnet = VoxNet()
+    # data = torch.rand([256, 1, 32, 32, 32])
+    # test_out = voxnet(data)
 
-    print("SSS:", test_out)
+    # print("SSS:", test_out)

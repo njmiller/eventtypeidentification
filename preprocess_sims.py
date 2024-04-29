@@ -10,7 +10,7 @@ import numpy as np
 
 import ROOT as M
 
-def load_data(fn, maxevents, minhits=1, outfn=None):
+def load_data(fn, maxevents, minhits=1, maxclass=None):
     """
     Prepare numpy array datasets for scikit-learn and tensorflow models
 
@@ -53,6 +53,8 @@ def load_data(fn, maxevents, minhits=1, outfn=None):
     nhits_list = []
 
     event_hits = {}
+    event_hits[0] = []
+    event_hits[1] = []
 
     max_label = 0
     NEvents = 0
@@ -63,7 +65,7 @@ def load_data(fn, maxevents, minhits=1, outfn=None):
             break
         i_tmp += 1
         if i_tmp % 40000 == 0:
-            print("Processing event", i_tmp)
+            print("Processing event", i_tmp, len(event_hits[0]), len(event_hits[1]))
 
         Type = 0
         if Event.GetNIAs() > 0:
@@ -79,6 +81,8 @@ def load_data(fn, maxevents, minhits=1, outfn=None):
 
         nhits = Event.GetNHTs()
         if nhits < minhits:
+            continue
+        if (maxclass != None) and (len(event_hits[Type]) > maxclass):
             continue
 
         nhits_list.append(nhits)
@@ -101,6 +105,12 @@ def load_data(fn, maxevents, minhits=1, outfn=None):
         event_types.append(Type)
 
         if (maxevents != None) and (NEvents >= maxevents):
+            break
+
+        if (maxclass != None) and (len(event_hits[0]) >= maxclass) and (len(event_hits[1]) >= maxclass):
+            print("Breaking on max number of events for each class")
+            print("0:", len(event_hits[0]))
+            print("1:", len(event_hits[1]))
             break
 
 
@@ -174,7 +184,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # 1. Load the Cosima sim data, do some filtering, and separate into different event types
-    event_hits = load_data(args.fn, args.nevents, minhits=args.minhits, outfn=args.outfn)
+    event_hits = load_data(args.fn, args.nevents, minhits=args.minhits,
+                           maxclass=args.nevents_dataset)
     if args.preprocess_only:
         if args.outfn is not None:
             with open(args.outfn, 'wb') as f:
@@ -183,6 +194,7 @@ if __name__ == '__main__':
 
     #2. Get similar number of each event type and combine to form a dataset
     dataset = gen_dataset(event_hits, args.nevents_dataset)
+    print("Size of dataset:", len(dataset[0]))
     if args.outfn is not None:
         with open(args.outfn, 'wb') as f:
             pickle.dump(dataset, f)
