@@ -39,12 +39,25 @@ def infer_and_plot():
     with open(fn_data, 'rb') as f:
         event_hits, event_types = pickle.load(f)
 
-    print("SSS:", len(event_types))
-    print("TTT:", np.sum(np.array(event_types) == 0))
-    print("UUU:", np.sum(np.array(event_types) == 1))
-    
-    event_hits = event_hits[:400]
-    event_types = event_types[:400]
+    nevents = len(event_types)
+    nevents0 = np.sum(np.array(event_types) == 0)
+    nevents1 = np.sum(np.array(event_types) == 1)
+
+    print("Num Events:", nevents)
+    print("Num Type 0:", nevents0)
+    print("Num Type 1:", nevents1)
+
+    # Get a small subset of events of each type
+    # Input data is not sorted.
+    nsub = 400 
+    event_hits0 = event_hits[:nsub]
+    event_types0 = event_types[:nsub]
+
+    event_hits1 = event_hits[nevents0:nevents0+nsub]
+    event_types1 = event_types[nevents0:nevents0+nsub]
+
+    event_hits = event_hits0 + event_hits1
+    event_types = event_types0 + event_types1
 
     XBins, YBins, ZBins = 110, 110, 48
     XMin, XMax = -55, 55

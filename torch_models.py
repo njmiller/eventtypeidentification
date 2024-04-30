@@ -2,7 +2,7 @@ import pickle
 import random
 import datetime
 
-import numpy as np
+# import numpy as np
 
 import torch
 import torch.nn.functional as F
@@ -12,8 +12,8 @@ from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 
-from sklearn.metrics import confusion_matrix, precision_score, recall_score
-from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+# from sklearn.model_selection import train_test_split
 
 def blue(x): return '\033[94m' + x + '\033[0m'
 
@@ -22,7 +22,8 @@ class VoxelDataset(Dataset):
         self.data = data  # x, y, z, e for each hit in each event
         self.labels = labels  # type label number for each event
 
-        labels_unique = np.unique(labels)
+        # labels_unique = np.unique(labels)
+        labels_unique = torch.unique(torch.Tensor(labels))
 
         self.nlabels = len(labels_unique)
         self.label_map = {}
@@ -46,6 +47,14 @@ class VoxelDataset(Dataset):
         self.zmin = zrange[0]
         self.zmax = zrange[1]
 
+        # self.xbins2 = np.linspace(self.xmin, self.xmax, num=self.xbins+1)
+        # self.ybins2 = np.linspace(self.ymin, self.ymax, num=self.ybins+1)
+        # self.zbins2 = np.linspace(self.zmin, self.zmax, num=self.zbins+1)
+
+        self.xbins2 = torch.linspace(self.xmin, self.xmax, steps=self.xbins+1)
+        self.ybins2 = torch.linspace(self.ymin, self.ymax, steps=self.ybins+1)
+        self.zbins2 = torch.linspace(self.zmin, self.zmax, steps=self.zbins+1)
+
     def __len__(self):
         return len(self.data)
 
@@ -59,14 +68,29 @@ class VoxelDataset(Dataset):
         tensor = torch.zeros([1, self.xbins, self.ybins, self.zbins])
         # nhits = len(data_idx)
 
+        # Subtract 1 since digitize will also give indices for values
+        # outside the input bins
+        # xbin2 = np.digitize(data_idx[:, 0], self.xbins2) - 1
+        # ybin2 = np.digitize(data_idx[:, 1], self.ybins2) - 1
+        # zbin2 = np.digitize(data_idx[:, 2], self.zbins2) - 1
+
+        xbin2 = torch.bucketize(torch.Tensor(data_idx[:, 0]), self.xbins2) - 1
+        ybin2 = torch.bucketize(torch.Tensor(data_idx[:, 1]), self.ybins2) - 1
+        zbin2 = torch.bucketize(torch.Tensor(data_idx[:, 2]), self.zbins2) - 1
+
+        energy = data_idx[:, 3]        
+
+        for xbin, ybin, zbin, eval in zip(xbin2, ybin2, zbin2, energy):
+            tensor[0, xbin, ybin, zbin] += eval
+
         # Iterate over all the hits, find the bin for each hit and add its energy to
         # that bin
-        for i in data_idx:
-            xbin = (int)(((i[0] - self.xmin) / (self.xmax - self.xmin)) * self.xbins)
-            ybin = (int)(((i[1] - self.ymin) / (self.ymax - self.ymin)) * self.ybins)
-            zbin = (int)(((i[2] - self.zmin) / (self.zmax - self.zmin)) * self.zbins)
-            tensor[0, xbin, ybin, zbin] += i[3]
-
+        # for i in data_idx:
+            # xbin = (int)(((i[0] - self.xmin) / (self.xmax - self.xmin)) * self.xbins)
+            # ybin = (int)(((i[1] - self.ymin) / (self.ymax - self.ymin)) * self.ybins)
+            # zbin = (int)(((i[2] - self.zmin) / (self.zmax - self.zmin)) * self.zbins)
+            # tensor[0, xbin, ybin, zbin] += i[3]
+        
         # We return the tensor and the label
         # if label_idx == 12:
             # label_out = 1
@@ -328,7 +352,7 @@ def train_all(model, params, train_dataset, test_dataset):
             best_correct = curr_correct
             print("TODO SAVE MODEL, ncorrect =", best_correct)
             # torch.save(model.state_dict(), '%s/cls_model_%d.pth' % (outf, epoch))
-            torch.save(model.module.state_dict(), "test_torch_model.pth")
+            torch.save(model.module.state_dict(), "test_torch_model_Apr30.pth")
 
     
     cm_train = model_to_cm(model, device, train_loader)
@@ -367,8 +391,8 @@ def model_to_cm(model, device, dataloader):
     model.eval()
 
     # correct = 0
-    pred_all = []
-    target_all = []
+    pred_all = torch.Tensor([])
+    target_all = torch.Tensor([])
     with torch.no_grad():
         for data, target in dataloader:
             # data, target = data.to(device), target.to(device)
@@ -377,8 +401,10 @@ def model_to_cm(model, device, dataloader):
             # test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
             # test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            pred_all = np.append(pred_all, pred.cpu())
-            target_all = np.append(target_all, target)
+            # pred_all = np.append(pred_all, pred.cpu())
+            # target_all = np.append(target_all, target)
+            pred_all = torch.cat((pred_all, pred.cpu()))
+            target_all = torch.cat((target_all, target))
             # correct += pred.eq(target.view_as(pred)).sum().item()
 
     cm = confusion_matrix(target_all, pred_all)
@@ -398,7 +424,7 @@ def load_and_train():
     print(f"Dataset contains {len(event_hits)} events")
 
     #batch_size = 128
-    batch_size = 400
+    batch_size = 800
     epochs = 15
     rate_learning = 0.001
     outf = 'torch_output'
@@ -428,7 +454,8 @@ def load_and_train():
     # random.shuffle(event_types)
 
     split = 0.9
-    ceil = np.ceil(len(event_hits)*split).astype(int)
+    # ceil = np.ceil(len(event_hits)*split).astype(int)
+    ceil = int(len(event_hits)*split)
     EventTypesTrain = shuffledTypes[:ceil]
     EventTypesTest = shuffledTypes[ceil:]
     EventHitsTrain = shuffledHits[:ceil]
