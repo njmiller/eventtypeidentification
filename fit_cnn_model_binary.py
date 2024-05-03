@@ -116,10 +116,7 @@ class TestNet1(torch.nn.Module):
 
 class VoxNet(torch.nn.Module):
 
-    def __init__(self, num_classes=10, input_shape=(32, 32, 32)):
-                 #weights_path=None,
-                 #load_body_weights=True,
-                 #load_head_weights=True):
+    def __init__(self, input_shape=(32, 32, 32)):
         """
         VoxNet: A 3D Convolutional Neural Network for Real-Time Object Recognition.
 
@@ -127,24 +124,10 @@ class VoxNet(torch.nn.Module):
 
         Parameters
         ----------
-        num_classes: int, optional
-            Default: 10
         input_shape: (x, y, z) tuple, optional
             Default: (32, 32, 32)
-        weights_path: str or None, optional
-            Default: None
-        load_body_weights: bool, optional
-            Default: True
-        load_head_weights: bool, optional
-            Default: True
-
-        Notes
-        -----
-        Weights available at: url to be added
-
-        If you want to finetune with custom classes, set load_head_weights to False.
-        Default head weights are pretrained with ModelNet10.
         """
+
         super(VoxNet, self).__init__()
         self.body = torch.nn.Sequential(OrderedDict([
             ('conv1', torch.nn.Conv3d(in_channels=1,
@@ -170,17 +153,8 @@ class VoxNet(torch.nn.Module):
             ('fc1', torch.nn.Linear(first_fc_in_features, 128)),
             ('relu1', torch.nn.ReLU()),
             ('drop3', torch.nn.Dropout(p=0.4)),
-            ('fc2', torch.nn.Linear(128, num_classes)),
-            # ('out1', torch.nn.Softmax(dim=1))
-            ('out1', torch.nn.LogSoftmax(dim=1))
+            ('fc2', torch.nn.Linear(128, 1)),
         ]))
-
-        #if weights_path is not None:
-        #    weights = torch.load(weights_path)
-        #    if load_body_weights:
-        #        self.body.load_state_dict(weights["body"])
-        #    elif load_head_weights:
-        #        self.head.load_state_dict(weights["head"])
 
     def forward(self, x):
         x = self.body(x)
@@ -276,14 +250,13 @@ def train2(model, params, train_dataset, test_dataset):
 '''
 
 # Training code in the MNIST example
-def train(model, device, train_loader, optimizer, epoch, log_interval=10, dry_run=False):
+def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=10, dry_run=False):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        loss = F.nll_loss(output, target)
-        # loss = F.cross_entropy(output, target)
+        loss = loss_fn(output, target)
         loss.backward()
         optimizer.step()
         if batch_idx % log_interval == 0:
@@ -294,20 +267,30 @@ def train(model, device, train_loader, optimizer, epoch, log_interval=10, dry_ru
                 break
 
 # Testing / Validation code
-def test(model, device, test_loader):
+def test(model, device, test_loader, loss_fn):
     model.eval()
     test_loss = 0
     correct = 0
+
+    # We want to do a mean over the whole testing set which we are doing in batches
+    prev_reduction = loss_fn.reduction
+    loss_fn.reduction = 'sum'
+
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += F.nll_loss(output, target, reduction='sum').item()  # sum up batch loss
-            # test_loss += F.cross_entropy(output, target, reduction='sum').item()  # sum up batch loss
+            
+            # test_loss += F.binary_cross_entropy_with_logits(output, target, reduction='sum').item()  # sum up batch loss
+            test_loss += loss_fn(output, target)*len(target)
+
             pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
+
+    # Reset the reduction to the previous value
+    loss_fn.reduction = prev_reduction
 
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
@@ -343,11 +326,14 @@ def train_all(model, params, train_dataset, test_dataset):
     # optimizer = optim.Adadelta(model.parameters(), lr=rate_learning)
     optimizer = optim.Adam(model.parameters(), lr=rate_learning)
     # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+
     scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
+    
+    loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
 
     best_correct = 0
     for epoch in range(1, n_epoch + 1):
-        train(model, device, train_loader, optimizer, epoch)
+        train(model, device, train_loader, optimizer, epoch, loss_fn)
         curr_correct = test(model, device, test_loader)
         scheduler.step()
 
@@ -465,7 +451,7 @@ def load_and_train():
     nclasses = train_dataset.nlabels
     print("Nclasses = ", nclasses)
     # nclasses = 2
-    model = VoxNet(num_classes=nclasses, input_shape=(XBins, YBins, ZBins))
+    model = VoxNet(input_shape=(XBins, YBins, ZBins))
 
     time0 = datetime.datetime.now()
     train_all(model, params, train_dataset, test_dataset)
