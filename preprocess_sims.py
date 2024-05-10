@@ -3,6 +3,8 @@ import collections
 import pickle
 import time
 import random
+import os
+import glob
 
 import numpy as np
 
@@ -10,7 +12,7 @@ import numpy as np
 
 import ROOT as M
 
-def load_data(fn, maxevents, minhits=1, maxclass=None):
+def load_data(fn, event_hits, maxevents, minhits=1, detectortype=None, maxclass=None):
     """
     Prepare numpy array datasets for scikit-learn and tensorflow models
 
@@ -52,29 +54,30 @@ def load_data(fn, maxevents, minhits=1, maxclass=None):
     event_types = []
     nhits_list = []
 
-    event_hits = {}
-    event_hits[0] = []
-    event_hits[1] = []
-
     max_label = 0
     NEvents = 0
     i_tmp = 0
     while True: 
         Event = Reader.GetNextEvent()
+        M.SetOwnership(Event, True)
         if not Event:
             break
         i_tmp += 1
         if i_tmp % 40000 == 0:
             print("Processing event", i_tmp, len(event_hits[0]), len(event_hits[1]))
 
-        Type = 0
+        # Type = 0
+        if (detectortype is not None) and Event.GetIAAt(1).GetDetectorType() != detectortype:
+            continue
+
         if Event.GetNIAs() > 0:
             if Event.GetIAAt(1).GetProcess() == M.MString("COMP"):
-                Type += 0# + Event.GetIAAt(1).GetDetectorType()
+                Type = 0# + Event.GetIAAt(1).GetDetectorType()
             elif Event.GetIAAt(1).GetProcess() == M.MString("PAIR"):
-                Type += 1#0 + Event.GetIAAt(1).GetDetectorType()
+                Type = 1#0 + Event.GetIAAt(1).GetDetectorType()
         else:
             break
+
 
         if Type+1 > max_label:
             max_label = Type + 1
@@ -113,8 +116,8 @@ def load_data(fn, maxevents, minhits=1, maxclass=None):
             print("1:", len(event_hits[1]))
             break
 
-
-    print("Total number processed = ", i)
+    
+    print("Total number processed = ", i_tmp)
 
     print("Occurrences of different event types:")
     print(collections.Counter(event_types))
@@ -174,18 +177,33 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Preprocess Cosima Sims')
 
     parser.add_argument('-fn', dest='fn', action='store', help='Filename to parse')
+    parser.add_argument('-path', dest='path', action='store', help='Path to files')
     parser.add_argument('-nevents', dest='nevents', type=int, action='store', help='Number of events')
     parser.add_argument('-minhits', dest='minhits', type=int, action='store', default=1,
                          help='Mininum number of hits for good event.')
     parser.add_argument('-outfn', dest='outfn', action='store', help='Path to store output file.')
     parser.add_argument('-preprocess_only', dest='preprocess_only', action='store_true')
     parser.add_argument('-nevents_dataset', dest='nevents_dataset', type=int, action='store', default=500000)
+    parser.add_argument('-dtype', dest='dtype', type=int, action='store', help='Detector type number')
 
     args = parser.parse_args()
 
     # 1. Load the Cosima sim data, do some filtering, and separate into different event types
-    event_hits = load_data(args.fn, args.nevents, minhits=args.minhits,
-                           maxclass=args.nevents_dataset)
+    pattern_glob = os.path.join(args.path, "*.sim.gz")
+    fns = glob.glob(pattern_glob)
+
+    event_hits = {}
+    event_hits[0] = []
+    event_hits[1] = []
+
+    maxclass = args.nevents_dataset
+    for fn in fns:
+        print("Processing:", fn)
+        load_data(fn, event_hits, args.nevents, minhits=args.minhits,
+                  maxclass=args.nevents_dataset, detectortype=args.dtype)
+        if (maxclass != None) and (len(event_hits[0]) >= maxclass) and (len(event_hits[1]) >= maxclass):
+            break
+
     if args.preprocess_only:
         if args.outfn is not None:
             with open(args.outfn, 'wb') as f:

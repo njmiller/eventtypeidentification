@@ -1,6 +1,7 @@
 import pickle
 import random
 import datetime
+import argparse
 
 # import numpy as np
 
@@ -99,7 +100,7 @@ class VoxelDataset(Dataset):
             # label_out = 1
         # else:
             # label_out = 0
-        label_out = label_idx
+        label_out = label_idx*1.0
 
         # return tensor, self.label_map[label_idx]
         return tensor, label_out
@@ -114,11 +115,11 @@ class TestNet1(torch.nn.Module):
         x = self.fullyconnected(x)
         return x
 
-class VoxNet(torch.nn.Module):
+class ComPairNet(torch.nn.Module):
 
     def __init__(self, input_shape=(32, 32, 32)):
         """
-        VoxNet: A 3D Convolutional Neural Network for Real-Time Object Recognition.
+        ComPairNet: A 3D Convolutional Neural Network for Real-Time Object Recognition.
 
         Modified in order to accept different input shapes.
 
@@ -128,7 +129,7 @@ class VoxNet(torch.nn.Module):
             Default: (32, 32, 32)
         """
 
-        super(VoxNet, self).__init__()
+        super(ComPairNet, self).__init__()
         self.body = torch.nn.Sequential(OrderedDict([
             ('conv1', torch.nn.Conv3d(in_channels=1,
                                       out_channels=32, kernel_size=5, stride=2)),
@@ -136,8 +137,8 @@ class VoxNet(torch.nn.Module):
             ('drop1', torch.nn.Dropout(p=0.2)),
             ('conv2', torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)),
             ('lkrelu2', torch.nn.LeakyReLU(0.1)),
-            ('drop2', torch.nn.Dropout(p=0.2)),
-            ('pool2', torch.nn.MaxPool3d(2))
+            ('drop2', torch.nn.Dropout(p=0.2))
+            # ('pool2', torch.nn.MaxPool3d(2))
         ]))
 
         # Trick to accept different input shapes. Just puts a random
@@ -152,7 +153,7 @@ class VoxNet(torch.nn.Module):
             ('flat', torch.nn.Flatten()),
             ('fc1', torch.nn.Linear(first_fc_in_features, 128)),
             ('relu1', torch.nn.ReLU()),
-            ('drop3', torch.nn.Dropout(p=0.4)),
+            ('drop3', torch.nn.Dropout(p=0.2)),
             ('fc2', torch.nn.Linear(128, 1)),
         ]))
 
@@ -252,11 +253,15 @@ def train2(model, params, train_dataset, test_dataset):
 # Training code in the MNIST example
 def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=10, dry_run=False):
     model.train()
+
+    avg_avg_loss = 0
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        loss = loss_fn(output, target)
+        # print("TEST:", output.shape, target.shape)
+        loss = loss_fn(output, target.reshape((-1, 1)))
+        avg_avg_loss += loss*len(target)
         loss.backward()
         optimizer.step()
         if batch_idx % log_interval == 0:
@@ -266,6 +271,10 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
             if dry_run:
                 break
 
+    avg_avg_loss /= len(train_loader)
+
+    return avg_avg_loss
+
 # Testing / Validation code
 def test(model, device, test_loader, loss_fn):
     model.eval()
@@ -273,30 +282,30 @@ def test(model, device, test_loader, loss_fn):
     correct = 0
 
     # We want to do a mean over the whole testing set which we are doing in batches
-    prev_reduction = loss_fn.reduction
-    loss_fn.reduction = 'sum'
+    # prev_reduction = loss_fn.reduction
+    # loss_fn.reduction = 'sum'
 
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            
-            # test_loss += F.binary_cross_entropy_with_logits(output, target, reduction='sum').item()  # sum up batch loss
-            test_loss += loss_fn(output, target)*len(target)
+            # test_loss += F.binary_cross_entropy_with_logits(output, target.view_as(output), reduction='sum').item()  # sum up batch loss
+            test_loss += loss_fn(output, target.view_as(output)).item()*len(target)
 
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            # pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            pred = output.ge(0).type(torch.int)
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
 
     # Reset the reduction to the previous value
-    loss_fn.reduction = prev_reduction
+    # loss_fn.reduction = prev_reduction
 
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
-    return correct
+    return correct, test_loss
 
 # Copied from MNIST example
 def train_all(model, params, train_dataset, test_dataset):
@@ -321,20 +330,32 @@ def train_all(model, params, train_dataset, test_dataset):
     model = torch.nn.DataParallel(model)
     model = model.to(device)
 
-    gamma = 0.5
 
     # optimizer = optim.Adadelta(model.parameters(), lr=rate_learning)
     optimizer = optim.Adam(model.parameters(), lr=rate_learning)
     # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 
+    # Every 10 epochs multiply the learning rate by a factor of gamma
+    gamma = 0.5
     scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
     
     loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
 
     best_correct = 0
+    loss_train = []
+    loss_test = []
+    correct_test = []
     for epoch in range(1, n_epoch + 1):
-        train(model, device, train_loader, optimizer, epoch, loss_fn)
-        curr_correct = test(model, device, test_loader)
+
+        # Train and then append the avg of the average losses for each batch
+        avg_avg_loss = train(model, device, train_loader, optimizer, epoch, loss_fn)
+        loss_train.append(avg_avg_loss)
+
+        # Run the test set and store the number of correct and the overall average loss
+        curr_correct, avg_loss = test(model, device, test_loader, loss_fn)
+        loss_test.append(avg_loss)
+        correct_test.append(curr_correct)
+
         scheduler.step()
 
         # Save model
@@ -342,7 +363,8 @@ def train_all(model, params, train_dataset, test_dataset):
             best_correct = curr_correct
             print("TODO SAVE MODEL, ncorrect =", best_correct)
             # torch.save(model.state_dict(), '%s/cls_model_%d.pth' % (outf, epoch))
-            torch.save(model.module.state_dict(), "test_torch_model_May1b.pth")
+            torch.save(model.module.state_dict(), "test_torch_model_params_May10.pth")
+            torch.save(model, "test_torch_model_May10.pth")
 
     
     cm_train = model_to_cm(model, device, train_loader)
@@ -386,7 +408,8 @@ def model_to_cm(model, device, dataloader):
         for data, target in dataloader:
             data = data.to(device)
             output = model(data)
-            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            # pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            pred = output.ge(0).type(torch.int)
             pred_all = torch.cat((pred_all, pred.cpu()))
             target_all = torch.cat((target_all, target))
 
@@ -394,11 +417,11 @@ def model_to_cm(model, device, dataloader):
 
     return cm
 
-def load_and_train():
+def load_and_train(fn):
     print("Starting PyTorch training...")
 
-    print("Loading data...")
-    fn = '/data/slag2/njmille2/test_dataset_nhits12.pkl'
+    print("Loading data...", fn)
+    # fn = '/data/slag2/njmille2/test_dataset_nhits12.pkl'
     with open(fn, 'rb') as f:
         event_hits, event_types = pickle.load(f)
 
@@ -447,11 +470,10 @@ def load_and_train():
     train_dataset = VoxelDataset(EventHitsTrain, EventTypesTrain, dims, ranges)
     test_dataset = VoxelDataset(EventHitsTest, EventTypesTest, dims, ranges)
 
-    print("Initializing PyTorch version of VoxNet...")
+    print("Initializing PyTorch binary classification version of ComPairNet...")
     nclasses = train_dataset.nlabels
-    print("Nclasses = ", nclasses)
     # nclasses = 2
-    model = VoxNet(input_shape=(XBins, YBins, ZBins))
+    model = ComPairNet(input_shape=(XBins, YBins, ZBins))
 
     time0 = datetime.datetime.now()
     train_all(model, params, train_dataset, test_dataset)
@@ -459,9 +481,10 @@ def load_and_train():
     print("Time to run:", time1-time0)
 
 if __name__ == "__main__":
-    load_and_train()
-    # voxnet = VoxNet()
-    # data = torch.rand([256, 1, 32, 32, 32])
-    # test_out = voxnet(data)
+    parser = argparse.ArgumentParser(description='Binary Classification of Events')
 
-    # print("SSS:", test_out)
+    parser.add_argument('-fn', dest='fn', action='store', help='Dataset filename')
+    
+    args = parser.parse_args()
+    
+    load_and_train(args.fn)
