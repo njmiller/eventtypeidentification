@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 
 from collections import OrderedDict
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, random_split
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 
@@ -71,13 +71,6 @@ class VoxelDataset(Dataset):
         label_idx = self.labels[idx]
 
         tensor = torch.zeros([1, self.xbins, self.ybins, self.zbins])
-        # nhits = len(data_idx)
-
-        # Subtract 1 since digitize will also give indices for values
-        # outside the input bins
-        # xbin2 = np.digitize(data_idx[:, 0], self.xbins2) - 1
-        # ybin2 = np.digitize(data_idx[:, 1], self.ybins2) - 1
-        # zbin2 = np.digitize(data_idx[:, 2], self.zbins2) - 1
 
         # Subtract 1 since bucketize will also give indices for values
         # outside the input bins and index 0 is for values below the lowest
@@ -109,6 +102,26 @@ class VoxelDataset(Dataset):
         # return tensor, self.label_map[label_idx]
         return tensor, label_out
 
+def gen_torch_model(input_shape=(110, 110, 48)):
+    pass
+
+    dropout0p5 = torch.nn.Dropout(0.5)
+    # dropout0p2 = torch.nn.Dropout(0.2)
+    dropout3d0p5 = torch.nn.Dropout3d(0.5)
+    
+    relu = torch.nn.ReLU()
+
+    first_fc_in_features = 10000 
+    flatten = torch.nn.Flatten()
+    lfc1 = torch.nn.Linear(first_fc_in_features, 128)
+    lfc2 = torch.nn.Linear(128, 1)
+
+    conn_list = [flatten,
+                 lfc1, relu, dropout0p5,
+                 lfc2]
+
+    # return conv_list, conn_list
+
 class TestNet1(torch.nn.Module):
 
     def __init__(self, input_shape=(110, 110, 48)):
@@ -117,19 +130,21 @@ class TestNet1(torch.nn.Module):
         # Convolutional Layers
         self.conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
         self.conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
-        self.conv3 = torch.nn.Conv3d(in_channels=64, out_channels=32, kernel_size=5)
-        self.conv4 = torch.nn.Conv3d(in_channels=128, out_channels=128, kernel_size=5)
+        # self.conv3 = torch.nn.Conv3d(in_channels=64, out_channels=32, kernel_size=5)
+        # self.conv4 = torch.nn.Conv3d(in_channels=128, out_channels=128, kernel_size=5)
         
-        self.relu = torch.nn.ReLU()
+        # self.relu = torch.nn.ReLU()
         self.leakyrelu0p01 = torch.nn.LeakyReLU(0.01)
-        self.leakyrelu0p1 = torch.nn.LeakyReLU(0.1)
+        # self.leakyrelu0p1 = torch.nn.LeakyReLU(0.1)
 
-        self.dropout0p5 = torch.nn.Dropout(0.5)
-        self.dropout0p2 = torch.nn.Dropout(0.2)
-        self.dropout3d0p5 = torch.nn.Dropout3d(0.5)
+        # self.dropout0p5 = torch.nn.Dropout(0.5)
+        self.dropout0p4 = torch.nn.Dropout(0.4)
+        # self.dropout0p2 = torch.nn.Dropout(0.2)
+        # self.dropout3d0p5 = torch.nn.Dropout3d(0.5)
+        # self.dropout3d0p4 = torch.nn.Dropout3d(0.4)
 
-        self.conv_list = [self.conv1, self.relu, 
-                          self.conv2, self.relu, self.dropout3d0p5]
+        # self.conv_list = [self.conv1, self.relu, 
+                        #   self.conv2, self.relu, self.dropout3d0p5]
                         #   self.conv3, self.relu, self.dropout3d0p5]
                         #   self.conv4, self.relu, self.dropout3d0p5]
         
@@ -142,9 +157,9 @@ class TestNet1(torch.nn.Module):
         self.lfc1 = torch.nn.Linear(first_fc_in_features, 128)
         self.lfc2 = torch.nn.Linear(128, 1)
 
-        self.conn_list = [self.flatten,
-                          self.lfc1, self.relu, self.dropout0p5,
-                          self.lfc2]
+        # self.conn_list = [self.flatten,
+                        #   self.lfc1, self.relu, self.dropout0p5,
+                        #   self.lfc2]
 
 
     def cnnpart(self, x):
@@ -152,10 +167,11 @@ class TestNet1(torch.nn.Module):
             # x = f(x)
 
         x = self.conv1(x)
-        x = self.relu(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
         x = self.conv2(x)
-        x = self.relu(x)
-        x = self.dropout3d0p5(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
 
         return x
     
@@ -165,8 +181,8 @@ class TestNet1(torch.nn.Module):
 
         x = self.flatten(x)
         x = self.lfc1(x)
-        x = self.relu(x)
-        x = self.dropout0p5(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
         x = self.lfc2(x)
 
         return x
@@ -229,91 +245,6 @@ class ComPairNet(torch.nn.Module):
         x = self.head(x)
         return x
 
-'''
-def train2(model, params, train_dataset, test_dataset):
-
-    batch_size = params[0]
-    n_epoch = params[1]
-    rate_learning = params[2]
-    outf = params[3]
-
-    use_cuda = True
-    use_mps = False
-    if use_cuda & torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif use_mps & torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-
-    model = torch.nn.DataParallel(model)
-    model = model.to(device)
-
-    # loss = torch.nn.CrossEntropyLoss()
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=rate_learning)
-    num_batch = len(train_dataset) / batch_size
-    # print(num_batch)
-
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True, pin_memory=True)
-
-    for epoch in range(n_epoch):
-        # scheduler.step()
-        for i, (voxel, cls_idx) in enumerate(train_dataloader, 0):
-            voxel, cls_idx = voxel.to(device), cls_idx.to(device)
-            # voxel = voxel.float()
-
-            optimizer.zero_grad()
-
-            model = model.train()
-            pred = model(voxel)
-
-            # loss = F.cross_entropy(pred, cls_idx)
-            loss = F.nll_loss(pred, cls_idx)
-
-            loss.backward()
-            optimizer.step()
-
-            # max(1) is maximum along dim=1
-            # the returned value is a tuple of (value, idxs) of which we want the indices
-            pred_choice = pred.data.max(1)[1]
-
-            correct = pred_choice.eq(cls_idx.data).cpu().sum()
-            print('[%d: %d/%d] train loss: %f accuracy: %f' %
-                  (epoch, i, num_batch, loss.item(), correct.item() / float(batch_size)))
-
-            # Every 5 batches run on the testing set and output the loss and accuracy
-            # if i % 5 == 0:
-                # j, sample = next(enumerate(test_dataloader, 0))
-
-                # voxel, cls_idx = sample
-                # voxel, cls_idx = voxel.to(device), cls_idx.to(device)
-
-                # Get the class numbers for each input
-                # cls_idx = cls_idx.data.max(1)[1]
-
-                # voxel = voxel.float()  # 转float, torch.Size([256, 1, 32, 32, 32])
-
-                # model = model.eval()
-                # pred = model(voxel)
-
-                #loss = F.nll_loss(pred, cls_idx)
-                # loss = F.cross_entropy(pred, cls_idx)
-
-                # pred_choice = pred.data.max(1)[1]
-
-                # correct = pred_choice.eq(cls_idx.data).cpu().sum()
-                # print('[%d: %d/%d] %s loss: %f accuracy: %f' % (epoch, i, num_batch,
-                                                                # blue('test'), loss.item(),
-                                                                # correct.item() / float(batch_size)))
-
-
-        test(model, device, test_dataloader)
-        # Save model. Maybe figure out how to save only if the model has improved
-        # torch.save(model.state_dict(), '%s/cls_model_%d.pth' % (outf, epoch))
-'''
-
 # Training code in the MNIST example
 def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=10, dry_run=False):
     model.train()
@@ -323,7 +254,6 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
         output = model(data)
-        # print("TEST:", output.shape, target.shape)
         loss = loss_fn(output, target.reshape((-1, 1)))
         loss_train += loss.item()*len(target)
         loss.backward()
@@ -429,7 +359,7 @@ def train_all(model, params, train_dataset, test_dataset, dir='./', label=""):
     print("Confusion Matrix:")
     print("Train:")
     print(cm_train)
-    print("Test:")
+    print("Validation:")
     print(cm_test)
     print("Combined:")
     print(cm_all)
@@ -444,12 +374,12 @@ def train_all(model, params, train_dataset, test_dataset, dir='./', label=""):
 
     print("Precision Score:")
     print("Train:", ps_train)
-    print("test:", ps_test)
+    print("Validation:", ps_test)
     print("Combined:", ps_all)
     
     print("Recall Score:")
     print("Train:", rs_train)
-    print("test:", rs_test)
+    print("Validation:", rs_test)
     print("Combined:", rs_all)
 
     print("Loss Train:", loss_train)
@@ -520,14 +450,13 @@ def load_and_train(fn, dir="./", label="", modelname='ComPairNet', batch_size=80
 
     ranges = [xrange, yrange, zrange]
 
+    split = 0.9
+
+    '''
     zipped = list(zip(event_hits, event_types))
     random.shuffle(zipped)
     shuffledHits, shuffledTypes = zip(*zipped)
 
-    # random.shuffle(event_hits)
-    # random.shuffle(event_types)
-
-    split = 0.9
     # ceil = np.ceil(len(event_hits)*split).astype(int)
     ceil = int(len(event_hits)*split)
     EventTypesTrain = shuffledTypes[:ceil]
@@ -539,6 +468,14 @@ def load_and_train(fn, dir="./", label="", modelname='ComPairNet', batch_size=80
 
     train_dataset = VoxelDataset(EventHitsTrain, EventTypesTrain, dims, ranges)
     test_dataset = VoxelDataset(EventHitsTest, EventTypesTest, dims, ranges)
+    '''
+
+    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
+    ntrain = int(len(dataset_all)*split)
+    nval = len(dataset_all) - ntrain
+    train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
+            generator=torch.Generator().manual_seed(42)
+    )
 
     if modelname == 'ComPairNet':
         print("Initializing PyTorch binary classification version of ComPairNet...")
@@ -550,7 +487,7 @@ def load_and_train(fn, dir="./", label="", modelname='ComPairNet', batch_size=80
         raise ValueError("Bad modelname")
 
     time0 = datetime.datetime.now()
-    train_all(model, params, train_dataset, test_dataset, dir=dir, label=label)
+    train_all(model, params, train_dataset, val_dataset, dir=dir, label=label)
     time1 = datetime.datetime.now()
     print("Time to run:", time1-time0)
 
