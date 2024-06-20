@@ -22,6 +22,7 @@ To reproduce my current results, you need to do the following
     * dtype requires each accepted event to have started in the corresponding detector type
 3. Run the `fit_cnn_model_binary_XXX.py` code. There are two versions of the code that I can use right now, the "distributed" and the "lightning" code. 
     * I have been mainly using the "distributed" version, but you should know that the accuracy listed after each epoch probably needs to be multiplied by the number of GPUs as each process will only test N / N_gpus but calculate an accuracy based on testing N. I am working on fixing this.
+    * The "lightning" code was written when I was trying to get the distributed parallel code working because it mentioned that stuff like that would work seemlessly. I stopped working on it when the "distributed" code looked like it started working though the metrics (accuracy, recall, precision) seem to be better integrated with it.
     * `python fit_cnn_model_binary_distributed.py -fn /data/slag2/njmille2/test_dataset_nhits2_detector1_2500000.pkl -dir /data/slag2/njmille2 -label June13 -model TestNet1 -batch 128`
     * This should run on all GPUs on the computer. It is coded for single node / multiple GPU.
     * The "dir" option specifies the output directory for the best model parameters and a text file with some information about loss and accuracy for each epoch.
