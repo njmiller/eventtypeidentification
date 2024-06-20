@@ -1,14 +1,10 @@
 import pickle
-import random
 import datetime
 import argparse
 import os
 
-# import numpy as np
-
 import torch
 
-# from collections import OrderedDict
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
@@ -20,7 +16,6 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import random_split
 
 from sklearn.metrics import confusion_matrix
-# from sklearn.model_selection import train_test_split
 
 from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
 
@@ -196,8 +191,6 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
                 f.write(" ")
             f.write("\n")
 
-# Counter({12: 23478, 11: 9500, 1: 6513, 2: 3603, 0: 3569, 10: 3300, 4: 27, 14: 10})
-
 def model_to_cm(model, device, dataloader):
     """Evaluate the model and then calculate the confusion matrix"""
     model.eval()
@@ -223,7 +216,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
     if rank == 0:
         print("Starting PyTorch training...")
         print("Loading data...", fn)
-    # fn = '/data/slag2/njmille2/test_dataset_nhits12.pkl'
+
     with open(fn, 'rb') as f:
         event_hits, event_types = pickle.load(f)
 
@@ -232,8 +225,6 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
 
         print(f"Batch size = {batch_size}")
 
-    # batch_size = 128
-    # batch_size = 800
     epochs = 20
     rate_learning = 0.001
     outf = 'torch_output'
@@ -254,28 +245,9 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
 
     ranges = [xrange, yrange, zrange]
 
+    # Split the dataset into training and validation datasets and make sure
+    # the same seed is used for all processes.
     split = 0.9
-    '''    
-    zipped = list(zip(event_hits, event_types))
-
-    # Same seed across all processes
-    random.seed(10)
-
-    random.shuffle(zipped)
-    shuffledHits, shuffledTypes = zip(*zipped)
-
-    # ceil = np.ceil(len(event_hits)*split).astype(int)
-    ceil = int(len(event_hits)*split)
-    EventTypesTrain = shuffledTypes[:ceil]
-    EventTypesTest = shuffledTypes[ceil:]
-    EventHitsTrain = shuffledHits[:ceil]
-    EventHitsTest = shuffledHits[ceil:]
-
-    print(f"Train: {len(EventTypesTrain)}, Test: {len(EventTypesTest)}")
-
-    train_dataset = VoxelDataset(EventHitsTrain, EventTypesTrain, dims, ranges)
-    test_dataset = VoxelDataset(EventHitsTest, EventTypesTest, dims, ranges)
-    '''
 
     dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
     ntrain = int(len(dataset_all)*split)
@@ -284,6 +256,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
             generator=torch.Generator().manual_seed(42)
     )
 
+    # Make an instance of the correct model defined in fit_cnn_model_binary.py
     if modelname == 'ComPairNet':
         print("Initializing PyTorch binary classification version of ComPairNet...")
         model = ComPairNet(input_shape=(XBins, YBins, ZBins))
