@@ -102,26 +102,6 @@ class VoxelDataset(Dataset):
         # return tensor, self.label_map[label_idx]
         return tensor, label_out
 
-def gen_torch_model(input_shape=(110, 110, 48)):
-    pass
-
-    dropout0p5 = torch.nn.Dropout(0.5)
-    # dropout0p2 = torch.nn.Dropout(0.2)
-    dropout3d0p5 = torch.nn.Dropout3d(0.5)
-    
-    relu = torch.nn.ReLU()
-
-    first_fc_in_features = 10000 
-    flatten = torch.nn.Flatten()
-    lfc1 = torch.nn.Linear(first_fc_in_features, 128)
-    lfc2 = torch.nn.Linear(128, 1)
-
-    conn_list = [flatten,
-                 lfc1, relu, dropout0p5,
-                 lfc2]
-
-    # return conv_list, conn_list
-
 class TestNet1(torch.nn.Module):
 
     def __init__(self, input_shape=(110, 110, 48)):
@@ -130,8 +110,8 @@ class TestNet1(torch.nn.Module):
         # Convolutional Layers
         self.conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
         self.conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
-        # self.conv3 = torch.nn.Conv3d(in_channels=64, out_channels=32, kernel_size=5)
-        # self.conv4 = torch.nn.Conv3d(in_channels=128, out_channels=128, kernel_size=5)
+        self.conv3 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=5)
+        # self.conv4 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=7)
         
         # self.relu = torch.nn.ReLU()
         self.leakyrelu0p01 = torch.nn.LeakyReLU(0.01)
@@ -170,6 +150,9 @@ class TestNet1(torch.nn.Module):
         x = self.leakyrelu0p01(x)
         x = self.dropout0p4(x)
         x = self.conv2(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
+        x = self.conv3(x)
         x = self.leakyrelu0p01(x)
         x = self.dropout0p4(x)
 
@@ -250,6 +233,7 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
     model.train()
 
     loss_train = 0
+
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()

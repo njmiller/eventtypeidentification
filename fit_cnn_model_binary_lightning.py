@@ -10,8 +10,8 @@ from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 
 from torchmetrics import Accuracy, Recall, Precision, ConfusionMatrix
 
-
 from fit_cnn_model_binary import ComPairNet, TestNet1, VoxelDataset
+from models import gen_testnet1
 
 class EventTypeIdentification(L.LightningModule):
     def __init__(self, input_shape=(110, 110, 48)):
@@ -20,58 +20,73 @@ class EventTypeIdentification(L.LightningModule):
         # Metrics
         self.train_acc = Accuracy(task="binary")
         self.train_recall = Recall(task="binary")
+        self.train_recall0 = Recall(task="binary")
         self.train_prec = Precision(task="binary")
+        self.train_prec0 = Precision(task="binary")
         self.train_cm = ConfusionMatrix(task="binary")
 
         self.val_acc = Accuracy(task="binary")
         self.val_recall = Recall(task="binary")
         self.val_prec = Precision(task="binary")
+        self.val_recall0 = Recall(task="binary")
+        self.val_prec0 = Precision(task="binary")
         self.val_cm = ConfusionMatrix(task="binary")
 
         # Model
+        
         # Convolutional Layers
-        self.conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
-        self.conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
-        # self.conv3 = torch.nn.Conv3d(in_channels=64, out_channels=32, kernel_size=5)
+        # self.conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
+        # self.conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
+        # self.conv3 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=5)
         # self.conv4 = torch.nn.Conv3d(in_channels=128, out_channels=128, kernel_size=5)
         
-        self.relu = torch.nn.ReLU()
+        # self.relu = torch.nn.ReLU()
         # self.leakyrelu0p01 = torch.nn.LeakyReLU(0.01)
         # self.leakyrelu0p1 = torch.nn.LeakyReLU(0.1)
 
-        self.dropout0p5 = torch.nn.Dropout(0.5)
+        # self.dropout0p5 = torch.nn.Dropout(0.5)
+        # self.dropout0p4 = torch.nn.Dropout(0.4)
         # self.dropout0p2 = torch.nn.Dropout(0.2)
-        self.dropout3d0p5 = torch.nn.Dropout3d(0.5)
+        # self.dropout3d0p5 = torch.nn.Dropout3d(0.5)
 
         # self.conv_list = [self.conv1, self.relu, 
                         #   self.conv2, self.relu, self.dropout3d0p5]
                         #   self.conv3, self.relu, self.dropout3d0p5]
                         #   self.conv4, self.relu, self.dropout3d0p5]
         
-        x = self.cnnpart(torch.autograd.Variable(
-            torch.rand((1, 1) + input_shape)))
-        first_fc_in_features = x.size()[1:].numel()
-        print("Number of features:", first_fc_in_features)
+        # x = self.cnnpart(torch.autograd.Variable(
+            # torch.rand((1, 1) + input_shape)))
+        # first_fc_in_features = x.size()[1:].numel()
+        # print("Number of features:", first_fc_in_features)
         
-        self.flatten = torch.nn.Flatten()
-        self.lfc1 = torch.nn.Linear(first_fc_in_features, 128)
-        self.lfc2 = torch.nn.Linear(128, 1)
-    
+        # self.flatten = torch.nn.Flatten()
+        # self.lfc1 = torch.nn.Linear(first_fc_in_features, 128)
+        # self.lfc2 = torch.nn.Linear(128, 1)
+
+        # self.layer_list = gen_testnet1(input_shape=input_shape)
+        # print("AAA:", self.layer_list)
+
+        self.model = gen_testnet1(input_shape=input_shape)
+
+    '''
     def cnnpart(self, x):
         x = self.conv1(x)
-        x = self.relu(x)
-        x = self.dropout3d0p5(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
         x = self.conv2(x)
-        x = self.relu(x)
-        x = self.dropout3d0p5(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
+        x = self.conv3(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
 
         return x
     
     def fullyconnectedpart(self, x):
         x = self.flatten(x)
         x = self.lfc1(x)
-        x = self.relu(x)
-        x = self.dropout0p5(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
         x = self.lfc2(x)
 
         return x
@@ -80,40 +95,57 @@ class EventTypeIdentification(L.LightningModule):
         x = self.cnnpart(x)
         x = self.fullyconnectedpart(x)
         return x
+    '''
 
-    # def forward(self, x):
-        # return self.model(x)
+    def forward(self, x):
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
         y = y.view_as(logits)
         loss = nn.functional.binary_cross_entropy_with_logits(logits, y)
+        
         self.train_acc.update(logits, y)
         self.train_prec.update(logits, y)
         self.train_recall.update(logits, y)
+        self.train_prec0.update(-logits, 1-y)
+        self.train_recall0.update(-logits, 1-y)
         self.train_cm.update(logits, y)
+
         self.log("train_loss", loss, prog_bar=True)
+        
         return loss
     
     def on_train_epoch_end(self):
         self.log("train_acc", self.train_acc.compute(), sync_dist=True)
         self.log("train_recall", self.train_recall.compute(), sync_dist=True)
+        self.log("train_recall0", self.train_recall0.compute(), sync_dist=True)
         self.log("train_prec", self.train_prec.compute(), sync_dist=True)
-    
+        self.log("train_prec0", self.train_prec0.compute(), sync_dist=True)
+        # self.log("train_cm", self.train_cm.compute(), sync_dist=True)
+
     def validation_step(self, batch, batch_idx):
         x, y = batch
         logits = self(x)
         y = y.view_as(logits)
         loss = nn.functional.binary_cross_entropy_with_logits(logits, y)
+        
         self.val_acc.update(logits, y)
         self.val_prec.update(logits, y)
         self.val_recall.update(logits, y)
+        self.val_prec0.update(-logits, 1-y)
+        self.val_recall0.update(-logits, 1-y)
         self.val_cm.update(logits, y)
+
         self.log("val_loss", loss, prog_bar=True, sync_dist=True)
         self.log("val_acc", self.val_acc.compute(), prog_bar=True, sync_dist=True)
         self.log("val_recall", self.val_recall.compute(), prog_bar=True, sync_dist=True)
-        self.log("val_prec", self.val_prec.compute(), prog_bar=True, sync_dist=True)
+        self.log("val_recall0", self.val_recall0.compute(), prog_bar=True, sync_dist=True)
+        self.log("val_prec", self.val_prec.compute(), sync_dist=True)
+        self.log("val_prec0", self.val_prec0.compute(), sync_dist=True)
+        # self.log("val_cm", self.val_cm.compute(), sync_dist=True)
+
         return loss
     
     def configure_optimizers(self):

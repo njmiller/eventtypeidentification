@@ -10,14 +10,17 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 
 import torch.multiprocessing as mp
-from torch.distributed import init_process_group, destroy_process_group
+from torch.distributed import init_process_group, destroy_process_group, all_reduce
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import random_split
 
-from sklearn.metrics import confusion_matrix
+# from sklearn.metrics import confusion_matrix
+import torchmetrics
+import torchmetrics.classification
 
 from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
+from models import gen_testnet1
 
 def ddp_setup(rank: int, world_size: int):
     """
@@ -42,24 +45,40 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
 
     loss_train = 0
     sum_tot = 0
+
+    num_world = torch.tensor(1).to(device)
+    all_reduce(num_world)
+    total_data = torch.tensor(0).to(device)
+    
     for batch_idx, (data, target) in enumerate(train_loader):
         sum_tot += torch.sum(data)
         data, target = data.to(device), target.to(device)
+
+        num_data = torch.tensor(len(data)).to(device)
+        all_reduce(num_data)
+        total_data += num_data
+        
         optimizer.zero_grad()
         output = model(data)
+        
         loss = loss_fn(output, target.reshape((-1, 1)))
         loss_train += loss.item()*len(target)
         loss.backward()
         optimizer.step()
+        
         if device == 0 and (batch_idx % log_interval == 0):
+            print('                                                      ', end='\r')
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item()))
+                epoch, total_data.item(), len(train_loader.dataset),
+                # epoch, batch_idx * len(data), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss.item()), end='\r')
             if dry_run:
                 break
+    
         
     loss_train /= len(train_loader.dataset)
 
+    # print('')
     return loss_train
 
 
@@ -67,10 +86,16 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
 def test(model, device, test_loader, loss_fn):
     model.eval()
     test_loss = 0
-    correct = 0
+    correct = torch.tensor(0).to(device)
+
+    # cm = torch.zeros([2, 2]).to(device)
+    # cm = torch.zeros([2, 2]).to(device)
+    metric_acc = torchmetrics.classification.Accuracy(task="binary").to(device)
+    metric_cm = torchmetrics.classification.ConfusionMatrix(task="binary").to(device)
 
     with torch.no_grad():
         for data, target in test_loader:
+            target_cpu = target
             data, target = data.to(device), target.to(device)
             output = model(data)
             test_loss += loss_fn(output, target.view_as(output)).item()*len(target)
@@ -78,12 +103,35 @@ def test(model, device, test_loader, loss_fn):
             pred = output.ge(0).type(torch.int)
             correct += pred.eq(target.view_as(pred)).sum().item()
 
+            # Using the scikit learn confusion matrix code.
+            # cm += torch.tensor(confusion_matrix(target_cpu, pred.cpu())).to(device)
+
+            # Torchmetrics inputs are opposite order as scikit-learn
+            # cm += torchmetrics.functional.confusion_matrix(pred, target.view_as(pred), task="binary")
+            acc = metric_acc(pred, target.view_as(pred))
+            cm = metric_cm(pred, target.view_as(pred))
+
+    all_reduce(correct)
+    correct = correct.cpu().item()
+
+    # all_reduce(cm)
+    acc = metric_acc.compute().item()
+    cm = metric_cm.compute()
+
+    rs_all = cm.diagonal()/cm.sum(axis=1)
+    ps_all = cm.diagonal()/cm.sum(axis=0)
+
+    rs_all = rs_all.tolist()
+    ps_all = ps_all.tolist()
+
     test_loss /= len(test_loader.dataset)
 
     if device == 0:
-        print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
+        print('\nTest set: Loss: {:.4f}, Acc: {}/{} ({:.0f}%), Prec: {}, Rec: {}\n'.format(
               test_loss, correct, len(test_loader.dataset),
-              100. * correct / len(test_loader.dataset)))
+              100. * correct / len(test_loader.dataset),
+              ps_all, rs_all))
+        print("TEST:", acc)
 
     return correct, test_loss
 
@@ -149,6 +197,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
             torch.save(model.module.state_dict(), fn_state)
 
 
+    '''
     cm_train = model_to_cm(model, device, train_loader)
     cm_test = model_to_cm(model, device, test_loader)
     cm_all = cm_train + cm_test
@@ -181,6 +230,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
     print("Loss Train:", loss_train)
     print("Loss Validation:", loss_test)
     print("Correct Validation", correct_test)
+    '''
 
     fn_loss = "loss_acc_values_" + label + ".txt"
     fn_loss = os.path.join(dir, fn_loss)
@@ -191,6 +241,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
                 f.write(" ")
             f.write("\n")
 
+'''
 def model_to_cm(model, device, dataloader):
     """Evaluate the model and then calculate the confusion matrix"""
     model.eval()
@@ -209,6 +260,7 @@ def model_to_cm(model, device, dataloader):
     cm = confusion_matrix(target_all, pred_all)
 
     return cm
+'''
 
 def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairNet', batch_size=800):
     ddp_setup(rank, world_size)
@@ -231,7 +283,8 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
 
     params = [batch_size, epochs, rate_learning, outf]
 
-    print("Initializing Torch Dataset...")
+    if rank == 0:
+        print("Initializing Torch Dataset...")
     
     XBins, YBins, ZBins = 110, 110, 48
     XMin, XMax = -55, 55
@@ -261,7 +314,8 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
         print("Initializing PyTorch binary classification version of ComPairNet...")
         model = ComPairNet(input_shape=(XBins, YBins, ZBins))
     elif modelname == 'TestNet1':
-        print("Initializing PyTorch binary classification version of TestNet1...")
+        if rank == 0:
+            print("Initializing PyTorch binary classification version of TestNet1...")
         model = TestNet1(input_shape=(XBins, YBins, ZBins))
     else:
         raise ValueError("Bad modelname")
