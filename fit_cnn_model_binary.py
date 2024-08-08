@@ -23,11 +23,12 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 class VoxelDataset(Dataset):
-    def __init__(self, data, labels, dims, ranges):
+    def __init__(self, data, labels, dims, ranges, extra=False):
         self.data = data  # x, y, z, e for each hit in each event
         self.labels = labels  # type label number for each event
 
-        # labels_unique = np.unique(labels)
+        self.extra = extra
+
         labels_unique = torch.unique(torch.Tensor(labels))
 
         self.nlabels = len(labels_unique)
@@ -51,10 +52,6 @@ class VoxelDataset(Dataset):
         self.ymax = yrange[1]
         self.zmin = zrange[0]
         self.zmax = zrange[1]
-
-        # self.xbins2 = np.linspace(self.xmin, self.xmax, num=self.xbins+1)
-        # self.ybins2 = np.linspace(self.ymin, self.ymax, num=self.ybins+1)
-        # self.zbins2 = np.linspace(self.zmin, self.zmax, num=self.zbins+1)
 
         self.xbins2 = torch.linspace(self.xmin, self.xmax, steps=self.xbins+1)
         self.ybins2 = torch.linspace(self.ymin, self.ymax, steps=self.ybins+1)
@@ -84,14 +81,6 @@ class VoxelDataset(Dataset):
         for xbin, ybin, zbin, eval in zip(xbin2, ybin2, zbin2, energy):
             tensor[0, xbin, ybin, zbin] += eval
 
-        # Iterate over all the hits, find the bin for each hit and add its energy to
-        # that bin
-        # for i in data_idx:
-            # xbin = (int)(((i[0] - self.xmin) / (self.xmax - self.xmin)) * self.xbins)
-            # ybin = (int)(((i[1] - self.ymin) / (self.ymax - self.ymin)) * self.ybins)
-            # zbin = (int)(((i[2] - self.zmin) / (self.zmax - self.zmin)) * self.zbins)
-            # tensor[0, xbin, ybin, zbin] += i[3]
-        
         # Separating into Pair (10-19) and Compton (0-9)
         # if label_idx >= 10:
             # label_out = 1
@@ -99,8 +88,14 @@ class VoxelDataset(Dataset):
             # label_out = 0
         label_out = label_idx*1.0
 
+        # nevents = len(data_idx)
+
         # return tensor, self.label_map[label_idx]
-        return tensor, label_out
+        if self.extra:
+            return tensor, label_out, len(data_idx)
+        else:
+            return tensor, label_out
+
 
 class TestNet1(torch.nn.Module):
 
@@ -111,7 +106,7 @@ class TestNet1(torch.nn.Module):
         self.conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
         self.conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
         self.conv3 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=5)
-        # self.conv4 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=7)
+        self.conv4 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
         
         # self.relu = torch.nn.ReLU()
         self.leakyrelu0p01 = torch.nn.LeakyReLU(0.01)
@@ -153,6 +148,9 @@ class TestNet1(torch.nn.Module):
         x = self.leakyrelu0p01(x)
         x = self.dropout0p4(x)
         x = self.conv3(x)
+        x = self.leakyrelu0p01(x)
+        x = self.dropout0p4(x)
+        x = self.conv4(x)
         x = self.leakyrelu0p01(x)
         x = self.dropout0p4(x)
 

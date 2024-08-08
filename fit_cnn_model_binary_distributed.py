@@ -2,6 +2,7 @@ import pickle
 import datetime
 import argparse
 import os
+import sys
 
 import torch
 
@@ -22,6 +23,34 @@ import torchmetrics.classification
 from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
 from models import gen_testnet1
 
+class AccuracyLogits(torchmetrics.Metric):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.add_state("correct", default=torch.zeros(4, dtype=torch.int64), dist_reduce_fx="sum")
+        self.add_state("total", default=torch.zeros(4, dtype=torch.int64), dist_reduce_fx="sum")
+
+    def update(self, logits: torch.Tensor, target: torch.Tensor) -> None:
+        # logits, target = self._input_format(logits, target)
+        if logits.shape != target.shape:
+            raise ValueError("logits and target must have same shape")
+
+        logit_num = 1
+        idx = logits <= -logit_num
+        self.correct[0] += torch.sum(target[idx] == 0)
+        self.total[0] += target[idx].numel()
+        idx = torch.logical_and(logits > -logit_num, logits <= 0)
+        self.correct[1] += torch.sum(target[idx] == 0) 
+        self.total[1] += target[idx].numel()
+        idx = torch.logical_and(logits > 0, logits <= logit_num)
+        self.correct[2] += torch.sum(target[idx] == 1)
+        self.total[2] += target[idx].numel()
+        idx = logit_num < logits
+        self.correct[3] += torch.sum(target[idx] == 1) 
+        self.total[3] += target[idx].numel()
+
+    def compute(self) -> torch.Tensor:
+        return self.correct.float() / self.total
+
 def ddp_setup(rank: int, world_size: int):
     """
     Args:
@@ -39,8 +68,37 @@ def blue(x): return '\033[94m' + x + '\033[0m'
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+def load_dataset(fn, extra=False):
+    with open(fn, 'rb') as f:
+        event_hits, event_types = pickle.load(f)
+    
+    XBins, YBins, ZBins = 110, 110, 48
+    XMin, XMax = -55, 55
+    YMin, YMax = -55, 55
+    ZMin, ZMax = 0, 48
+
+    dims = [XBins, YBins, ZBins]
+    xrange = [XMin, XMax]
+    yrange = [YMin, YMax]
+    zrange = [ZMin, ZMax]
+
+    ranges = [xrange, yrange, zrange]
+
+    # Split the dataset into training and validation datasets and make sure
+    # the same seed is used for all processes.
+    split = 0.9
+
+    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=extra)
+    ntrain = int(len(dataset_all)*split)
+    nval = len(dataset_all) - ntrain
+    train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
+            generator=torch.Generator().manual_seed(42)
+    )
+
+    return train_dataset, val_dataset, dims
+
 # Training code in the MNIST example
-def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=10, dry_run=False):
+def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=50, dry_run=False):
     model.train()
 
     loss_train = 0
@@ -50,6 +108,7 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
     all_reduce(num_world)
     total_data = torch.tensor(0).to(device)
     
+    time0 = datetime.datetime.now()
     for batch_idx, (data, target) in enumerate(train_loader):
         sum_tot += torch.sum(data)
         data, target = data.to(device), target.to(device)
@@ -65,13 +124,21 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=1
         loss_train += loss.item()*len(target)
         loss.backward()
         optimizer.step()
+        time1 = datetime.datetime.now()
+        time_elapsed = time1-time0
         
         if device == 0 and (batch_idx % log_interval == 0):
-            print('                                                      ', end='\r')
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+            percent_finished = 100. * batch_idx / len(train_loader)
+            if percent_finished > 0:
+                time_to_finish = time_elapsed * (100 - percent_finished) / percent_finished
+            else:
+                time_to_finish = time_elapsed * 10000
+            print('                                                                                                   ', end='\r')
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\t{} : {}\tLoss: {:.6f}'.format(
                 epoch, total_data.item(), len(train_loader.dataset),
                 # epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader), loss.item()), end='\r')
+                percent_finished, time_elapsed, time_to_finish, loss.item()), end='\r')
+            sys.stdout.flush()
             if dry_run:
                 break
     
@@ -114,7 +181,6 @@ def test(model, device, test_loader, loss_fn):
     all_reduce(correct)
     correct = correct.cpu().item()
 
-    # all_reduce(cm)
     acc = metric_acc.compute().item()
     cm = metric_cm.compute()
 
@@ -129,9 +195,10 @@ def test(model, device, test_loader, loss_fn):
     if device == 0:
         print('\nTest set: Loss: {:.4f}, Acc: {}/{} ({:.0f}%), Prec: {}, Rec: {}\n'.format(
               test_loss, correct, len(test_loader.dataset),
-              100. * correct / len(test_loader.dataset),
+            #   100. * correct / len(test_loader.dataset),
+              100. * acc,
               ps_all, rs_all))
-        print("TEST:", acc)
+        # print("TEST:", acc)
 
     return correct, test_loss
 
@@ -148,7 +215,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
     test_loader = DataLoader(test_dataset, batch_size=batch_size, pin_memory=True,
                              sampler=DistributedSampler(test_dataset))
 
-    use_cuda = True
+    # use_cuda = True
     # if use_cuda & torch.cuda.is_available():
         # device = torch.device("cuda")
     # else:
@@ -193,44 +260,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
             print("Saving new model, ncorrect =", best_correct)
             fn_state = "test_torch_model_params_" + label + ".pth"
             fn_state = os.path.join(dir, fn_state)
-            # torch.save(model.module.state_dict(), "test_torch_model_params_May14.pth")
             torch.save(model.module.state_dict(), fn_state)
-
-
-    '''
-    cm_train = model_to_cm(model, device, train_loader)
-    cm_test = model_to_cm(model, device, test_loader)
-    cm_all = cm_train + cm_test
-    print("Confusion Matrix:")
-    print("Train:")
-    print(cm_train)
-    print("Test:")
-    print(cm_test)
-    print("Combined:")
-    print(cm_all)
-
-    rs_train = cm_train.diagonal()/cm_train.sum(axis=1)
-    rs_test = cm_test.diagonal()/cm_test.sum(axis=1)
-    rs_all = cm_all.diagonal()/cm_all.sum(axis=1)
-    
-    ps_train = cm_train.diagonal()/cm_train.sum(axis=0)
-    ps_test = cm_test.diagonal()/cm_test.sum(axis=0)
-    ps_all = cm_all.diagonal()/cm_all.sum(axis=0)
-
-    print("Precision Score:")
-    print("Train:", ps_train)
-    print("test:", ps_test)
-    print("Combined:", ps_all)
-    
-    print("Recall Score:")
-    print("Train:", rs_train)
-    print("test:", rs_test)
-    print("Combined:", rs_all)
-
-    print("Loss Train:", loss_train)
-    print("Loss Validation:", loss_test)
-    print("Correct Validation", correct_test)
-    '''
 
     fn_loss = "loss_acc_values_" + label + ".txt"
     fn_loss = os.path.join(dir, fn_loss)
@@ -241,26 +271,6 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
                 f.write(" ")
             f.write("\n")
 
-'''
-def model_to_cm(model, device, dataloader):
-    """Evaluate the model and then calculate the confusion matrix"""
-    model.eval()
-
-    pred_all = torch.Tensor([])
-    target_all = torch.Tensor([])
-    with torch.no_grad():
-        for data, target in dataloader:
-            data = data.to(device)
-            output = model(data)
-            # pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
-            pred = output.ge(0).type(torch.int)
-            pred_all = torch.cat((pred_all, pred.cpu()))
-            target_all = torch.cat((target_all, target))
-
-    cm = confusion_matrix(target_all, pred_all)
-
-    return cm
-'''
 
 def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairNet', batch_size=800):
     ddp_setup(rank, world_size)
