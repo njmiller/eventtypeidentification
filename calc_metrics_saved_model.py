@@ -43,6 +43,8 @@ def test(model, device, test_loader, loss_fn):
     logits_all = []
     nhits_all = []
     target_all = []
+    energy_all = []
+    bincount_all = []
 
     if device == 0:
         print("Starting inference on validation set")
@@ -65,6 +67,10 @@ def test(model, device, test_loader, loss_fn):
             nhits_all.append(nhits.to(device))
             logits_all.append(output)
             target_all.append(target)
+            energy_all.append(data.sum(dim=(1, 2, 3, 4)))
+
+            tmp = data != 0
+            bincount_all.append(tmp.sum(dim=(1, 2, 3, 4)))
 
     # nhits_all = gather_all(nhits_all)
     # logits_all = gather_all(logits_all)
@@ -72,6 +78,8 @@ def test(model, device, test_loader, loss_fn):
     nhits_all = torch.cat(nhits_all)
     logits_all = torch.cat(logits_all)
     target_all = torch.cat(target_all)
+    energy_all = torch.cat(energy_all)
+    bincount_all = torch.cat(bincount_all)
 
     '''
     nhits_all_list = [torch.zeros(128, dtype=torch.int64, device=device) for _ in range(2)]
@@ -110,6 +118,8 @@ def test(model, device, test_loader, loss_fn):
     if device == 0:
         logits_all, nhits_all = logits_all.cpu(), nhits_all.cpu()
         target_all = target_all.cpu()
+        energy_all = energy_all.cpu()
+        bincount_all = bincount_all.cpu()
 
         logits_all = torch.reshape(logits_all, shape=(-1, ))
         nhits_all = torch.reshape(nhits_all, shape=(-1, ))
@@ -142,6 +152,36 @@ def test(model, device, test_loader, loss_fn):
         plt.scatter(logits_all[idx0], nhits_all[idx0], c='b')
         plt.scatter(logits_all[idx1], nhits_all[idx1], c='r')
         plt.savefig("logits_vs_nhits2.png")
+        plt.close()
+        
+        plt.figure()
+        plt.scatter(logits_all[idx1], nhits_all[idx1], c='r')
+        plt.scatter(logits_all[idx0], nhits_all[idx0], c='b')
+        plt.savefig("logits_vs_nhits3.png")
+        plt.close()
+        
+        plt.figure()
+        plt.scatter(logits_all[idx0], energy_all[idx0], c='b')
+        plt.scatter(logits_all[idx1], energy_all[idx1], c='r')
+        plt.savefig("logits_vs_energy.png")
+        plt.close()
+        
+        plt.figure()
+        plt.scatter(logits_all[idx1], energy_all[idx1], c='r')
+        plt.scatter(logits_all[idx0], energy_all[idx0], c='b')
+        plt.savefig("logits_vs_energy2.png")
+        plt.close()
+        
+        plt.figure()
+        plt.scatter(logits_all[idx0], bincount_all[idx0], c='b')
+        plt.scatter(logits_all[idx1], bincount_all[idx1], c='r')
+        plt.savefig("logits_vs_bincount.png")
+        plt.close()
+        
+        plt.figure()
+        plt.scatter(logits_all[idx1], bincount_all[idx1], c='r')
+        plt.scatter(logits_all[idx0], bincount_all[idx0], c='b')
+        plt.savefig("logits_vs_bincount2.png")
         plt.close()
     
     return correct, test_loss
