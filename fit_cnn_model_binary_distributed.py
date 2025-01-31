@@ -20,8 +20,8 @@ from torch.utils.data import random_split
 import torchmetrics
 import torchmetrics.classification
 
-from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
-from models import gen_testnet1
+# from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
+from models import gen_testnet1, VoxelDataset
 
 class AccuracyLogits(torchmetrics.Metric):
     def __init__(self, **kwargs):
@@ -71,7 +71,7 @@ def count_parameters(model):
 def load_dataset(fn, extra=False):
     with open(fn, 'rb') as f:
         event_hits, event_types = pickle.load(f)
-    
+
     XBins, YBins, ZBins = 110, 110, 48
     XMin, XMax = -55, 55
     YMin, YMax = -55, 55
@@ -109,7 +109,7 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
     total_data = torch.tensor(0).to(device)
     
     time0 = datetime.datetime.now()
-    for batch_idx, (data, target) in enumerate(train_loader):
+    for batch_idx, (data, target, _) in enumerate(train_loader):
         sum_tot += torch.sum(data)
         data, target = data.to(device), target.to(device)
 
@@ -160,8 +160,12 @@ def test(model, device, test_loader, loss_fn):
     metric_acc = torchmetrics.classification.Accuracy(task="binary").to(device)
     metric_cm = torchmetrics.classification.ConfusionMatrix(task="binary").to(device)
 
+    corr_bins = torch.zeros(11, 2).to(device)
+    all_bins = torch.zeros(11, 2).to(device)
+    bins = torch.tensor([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+
     with torch.no_grad():
-        for data, target in test_loader:
+        for data, target, nhits in test_loader:
             target_cpu = target
             data, target = data.to(device), target.to(device)
             output = model(data)
@@ -169,6 +173,8 @@ def test(model, device, test_loader, loss_fn):
 
             pred = output.ge(0).type(torch.int)
             correct += pred.eq(target.view_as(pred)).sum().item()
+            # correct_ident = pred.eq(target.view_as(pred))
+            # correct += correct_ident.sum().item()
 
             # Using the scikit learn confusion matrix code.
             # cm += torch.tensor(confusion_matrix(target_cpu, pred.cpu())).to(device)
@@ -177,6 +183,15 @@ def test(model, device, test_loader, loss_fn):
             # cm += torchmetrics.functional.confusion_matrix(pred, target.view_as(pred), task="binary")
             acc = metric_acc(pred, target.view_as(pred))
             cm = metric_cm(pred, target.view_as(pred))
+
+            # Bins calculation. Need to figure out if there is a better way to do this than
+            # iterating over all the data
+            nhits_bins = torch.bucketize(nhits, bins)
+            for bin_val, pred_tmp, target_tmp in zip(nhits_bins, pred, target.view_as(pred)):
+                target_tmp = target_tmp.int()
+                all_bins[bin_val, target_tmp] += 1
+                if pred_tmp == target_tmp:
+                    corr_bins[bin_val, target_tmp] += 1
 
     all_reduce(correct)
     correct = correct.cpu().item()
@@ -190,6 +205,14 @@ def test(model, device, test_loader, loss_fn):
     rs_all = rs_all.tolist()
     ps_all = ps_all.tolist()
 
+    all_reduce(all_bins)
+    all_reduce(corr_bins)
+    all_bins = all_bins.cpu()
+    corr_bins = corr_bins.cpu()
+
+    acc_com_bins = (corr_bins[:, 0] / all_bins[:, 0]).tolist()
+    acc_pair_bins = (corr_bins[:, 1] / all_bins[:, 1]).tolist()
+
     test_loss /= len(test_loader.dataset)
 
     if device == 0:
@@ -198,6 +221,8 @@ def test(model, device, test_loader, loss_fn):
             #   100. * correct / len(test_loader.dataset),
               100. * acc,
               ps_all, rs_all))
+        print("ACC COM:", acc_com_bins)
+        print("ACC PAIR:", acc_pair_bins) 
         # print("TEST:", acc)
 
     return correct, test_loss
@@ -281,7 +306,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
 
     with open(fn, 'rb') as f:
         event_hits, event_types = pickle.load(f)
-
+    
     if rank == 0:
         print(f"Dataset contains {len(event_hits)} events")
 
@@ -312,9 +337,15 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
     # the same seed is used for all processes.
     split = 0.9
 
-    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
+    # dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
+    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=True)
+
+    # nsub = 3000
+    # dataset_all, _ = random_split(dataset_all, [nsub, len(dataset_all)-nsub])
+    
     ntrain = int(len(dataset_all)*split)
     nval = len(dataset_all) - ntrain
+
     train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
             generator=torch.Generator().manual_seed(42)
     )
@@ -322,11 +353,13 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
     # Make an instance of the correct model defined in fit_cnn_model_binary.py
     if modelname == 'ComPairNet':
         print("Initializing PyTorch binary classification version of ComPairNet...")
-        model = ComPairNet(input_shape=(XBins, YBins, ZBins))
+        # model = ComPairNet(input_shape=(XBins, YBins, ZBins))
+        raise ValueError("Don't have ComPairNet right now")
     elif modelname == 'TestNet1':
         if rank == 0:
             print("Initializing PyTorch binary classification version of TestNet1...")
-        model = TestNet1(input_shape=(XBins, YBins, ZBins))
+        # model = TestNet1(input_shape=(XBins, YBins, ZBins))
+        model = gen_testnet1(input_shape=(XBins, YBins, ZBins))
     else:
         raise ValueError("Bad modelname")
 

@@ -3,9 +3,11 @@ import torch
 from torch.utils.data import Dataset
 
 class VoxelDataset(Dataset):
-    def __init__(self, data, labels, dims, ranges):
+    def __init__(self, data, labels, dims, ranges, extra=False):
         self.data = data  # x, y, z, e for each hit in each event
         self.labels = labels  # type label number for each event
+
+        self.extra = extra
 
         # labels_unique = np.unique(labels)
         labels_unique = torch.unique(torch.Tensor(labels))
@@ -62,7 +64,10 @@ class VoxelDataset(Dataset):
 
         label_out = label_idx*1.0
 
-        return tensor, label_out
+        if self.extra:
+            return tensor, label_out, len(data_idx)
+        else:
+            return tensor, label_out
 
 def gen_testnet1(input_shape=(110, 110, 48)):
 
@@ -70,6 +75,7 @@ def gen_testnet1(input_shape=(110, 110, 48)):
     conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
     conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
     conv3 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=5)
+    conv4 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
 
     # Dropout layers
     dropout0p4 = torch.nn.Dropout(0.4)
@@ -100,6 +106,56 @@ def gen_testnet1(input_shape=(110, 110, 48)):
     # Linear layers
     lfc1 = torch.nn.Linear(first_fc_in_features, 128)
     lfc2 = torch.nn.Linear(128, 1)
+
+    linear_list = [flatten,
+                   lfc1, leakyrelu0p01, dropout0p4,
+                   lfc2,
+                  ]
+
+    # return conv_list + linear_list
+    all_layers = conv_list + linear_list
+    return torch.nn.Sequential(*all_layers)
+
+def gen_testnet_mult(input_shape=(110, 110, 48)):
+    """
+    Returns a similar model to gen_testnet1 except that there are three output
+    categories instead of one.
+    """    
+    # Convolutional layers
+    conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=5, stride=2)
+    conv2 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
+    conv3 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=5)
+    conv4 = torch.nn.Conv3d(in_channels=32, out_channels=32, kernel_size=3)
+
+    # Dropout layers
+    dropout0p4 = torch.nn.Dropout(0.4)
+    # dropout0p2 = torch.nn.Dropout(0.2)
+    # dropout3d0p4 = torch.nn.Dropout3d(0.4)
+    
+    # ReLU layers
+    leakyrelu0p01 = torch.nn.LeakyReLU(0.01)
+    # relu = torch.nn.ReLU()
+
+    conv_list = [conv1, leakyrelu0p01, dropout0p4,
+                 conv2, leakyrelu0p01, dropout0p4,
+                 conv3, leakyrelu0p01, dropout0p4,
+                 conv4, leakyrelu0p01, dropout0p4,
+                ]
+
+    x = torch.rand((1, 1) + input_shape)
+    for f in conv_list:
+        x = f(x)
+
+    # x = self.cnnpart(torch.autograd.Variable(
+            # torch.rand((1, 1) + input_shape)))
+    
+    first_fc_in_features = x.size()[1:].numel()
+    
+    flatten = torch.nn.Flatten()
+
+    # Linear layers
+    lfc1 = torch.nn.Linear(first_fc_in_features, 128)
+    lfc2 = torch.nn.Linear(128, 3)
 
     linear_list = [flatten,
                    lfc1, leakyrelu0p01, dropout0p4,

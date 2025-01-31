@@ -122,6 +122,8 @@ class TestNet1(torch.nn.Module):
                         #   self.conv2, self.relu, self.dropout3d0p5]
                         #   self.conv3, self.relu, self.dropout3d0p5]
                         #   self.conv4, self.relu, self.dropout3d0p5]
+
+        # self.maxpool = torch.nn.MaxPool3d(kernel_size=2)
         
         x = self.cnnpart(torch.autograd.Variable(
             torch.rand((1, 1) + input_shape)))
@@ -153,6 +155,7 @@ class TestNet1(torch.nn.Module):
         x = self.conv4(x)
         x = self.leakyrelu0p01(x)
         x = self.dropout0p4(x)
+        # x = self.maxpool(x)
 
         return x
     

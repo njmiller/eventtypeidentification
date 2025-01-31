@@ -183,7 +183,17 @@ def test(model, device, test_loader, loss_fn):
         plt.scatter(logits_all[idx0], bincount_all[idx0], c='b')
         plt.savefig("logits_vs_bincount2.png")
         plt.close()
-    
+        
+        plt.figure()
+        plt.hist(bincount_all[idx0], bins=torch.arange(1, 102, 2))
+        plt.savefig("Bins_compton2.png")
+        plt.close()
+        
+        plt.figure()
+        plt.hist(bincount_all[idx1], bins=torch.arange(1, 102, 2))
+        plt.savefig("Bins_pair2.png")
+        plt.close()
+ 
     return correct, test_loss
 
 def load_and_test(rank, world_size, fn, dir="./", label="", batch_size=800):
