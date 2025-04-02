@@ -64,6 +64,7 @@ class VoxelDataset(Dataset):
 
         label_out = label_idx*1.0
 
+        label_out = 1.0
         if self.extra:
             return tensor, label_out, len(data_idx)
         else:
@@ -165,3 +166,53 @@ def gen_testnet_mult(input_shape=(110, 110, 48)):
     # return conv_list + linear_list
     all_layers = conv_list + linear_list
     return torch.nn.Sequential(*all_layers)
+
+def gen_claudenet1(input_shape=(110, 110, 48)):
+
+    relu = torch.nn.ReLU()
+
+    conv1 = torch.nn.Conv3d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
+    conv2 = torch.nn.Conv3d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+    conv3 = torch.nn.Conv3d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
+    
+    bn1 = torch.nn.BatchNorm3d(32)
+    bn2 = torch.nn.BatchNorm3d(64)
+    bn3 = torch.nn.BatchNorm3d(128)
+    
+    pool1 = torch.nn.MaxPool3d(kernel_size=2)
+    pool2 = torch.nn.MaxPool3d(kernel_size=2)
+    pool3 = torch.nn.MaxPool3d(kernel_size=2)
+
+    dropout0p5 = torch.nn.Dropout(0.5)
+    
+    conv_list = [conv1, bn1, relu, pool1,
+                 conv2, bn2, relu, pool2,
+                 conv3, bn3, relu, pool3,
+                ]
+    
+    x = torch.rand((1, 1) + input_shape)
+    for f in conv_list:
+        x = f(x)
+    
+    first_fc_in_features = x.size()[1:].numel()
+    
+    flatten = torch.nn.Flatten()
+    
+    flat_features = 128 * 13 * 13 * 6 # for 110x110x48 input
+
+    print("FEATURES:", first_fc_in_features, flat_features)
+
+    fc1 = torch.nn.Linear(first_fc_in_features, 512)
+    fc2 = torch.nn.Linear(512, 256)
+    fc3 = torch.nn.Linear(256, 1)
+    
+    linear_list = [flatten,
+                   fc1, relu, dropout0p5,
+                   fc2, relu, dropout0p5,
+                   fc3,
+                  ]
+    
+    all_layers = conv_list + linear_list
+    return torch.nn.Sequential(*all_layers)
+
+

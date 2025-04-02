@@ -8,7 +8,7 @@ import torch
 
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 
 import torch.multiprocessing as mp
 from torch.distributed import init_process_group, destroy_process_group, all_reduce
@@ -21,7 +21,7 @@ import torchmetrics
 import torchmetrics.classification
 
 # from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
-from models import gen_testnet1, VoxelDataset
+from models import gen_testnet1, VoxelDataset, gen_claudenet1
 
 class AccuracyLogits(torchmetrics.Metric):
     def __init__(self, **kwargs):
@@ -176,9 +176,6 @@ def test(model, device, test_loader, loss_fn):
             # correct_ident = pred.eq(target.view_as(pred))
             # correct += correct_ident.sum().item()
 
-            # Using the scikit learn confusion matrix code.
-            # cm += torch.tensor(confusion_matrix(target_cpu, pred.cpu())).to(device)
-
             # Torchmetrics inputs are opposite order as scikit-learn
             # cm += torchmetrics.functional.confusion_matrix(pred, target.view_as(pred), task="binary")
             acc = metric_acc(pred, target.view_as(pred))
@@ -216,14 +213,15 @@ def test(model, device, test_loader, loss_fn):
     test_loss /= len(test_loader.dataset)
 
     if device == 0:
-        print('\nTest set: Loss: {:.4f}, Acc: {}/{} ({:.0f}%), Prec: {}, Rec: {}\n'.format(
+        print('\nTest set: Loss: {:.4f}, Acc: {}/{} ({:.0f}%), Prec: {}, Rec: {}'.format(
               test_loss, correct, len(test_loader.dataset),
             #   100. * correct / len(test_loader.dataset),
               100. * acc,
               ps_all, rs_all))
         print("ACC COM:", acc_com_bins)
-        print("ACC PAIR:", acc_pair_bins) 
-        # print("TEST:", acc)
+        print("ACC PAIR:", acc_pair_bins)
+        print("N COM:", all_bins[:, 0].tolist())
+        print("N PAIR:", all_bins[:, 1].tolist())
 
     return correct, test_loss
 
@@ -240,25 +238,24 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
     test_loader = DataLoader(test_dataset, batch_size=batch_size, pin_memory=True,
                              sampler=DistributedSampler(test_dataset))
 
-    # use_cuda = True
-    # if use_cuda & torch.cuda.is_available():
-        # device = torch.device("cuda")
-    # else:
-        # device = torch.device("cpu")
-    # model = model.to(device)
+    # Send the model to the correct GPU
     device = rank
     model = model.to(rank)
     model = DDP(model, device_ids=[rank])
 
+    # Is torch.compile worth it here?
+    # model = torch.compile(model)
 
     # optimizer = optim.Adadelta(model.parameters(), lr=rate_learning)
     optimizer = optim.Adam(model.parameters(), lr=rate_learning)
     # optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 
     # Every 10 epochs multiply the learning rate by a factor of gamma
-    gamma = 0.5
-    scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
-    
+    # gamma = 0.5
+    # scheduler = StepLR(optimizer, step_size=10, gamma=gamma)
+    scheduler = CosineAnnealingLR(optimizer, T_max=10, eta_min=1e-5)
+
+    # Loss function 
     loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
 
     best_correct = 0
@@ -279,13 +276,14 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
 
         scheduler.step()
 
-        # Save model
+        # Save model if it is better than previous best model
         if rank == 0 and (curr_correct > best_correct):
             best_correct = curr_correct
             print("Saving new model, ncorrect =", best_correct)
             fn_state = "test_torch_model_params_" + label + ".pth"
             fn_state = os.path.join(dir, fn_state)
             torch.save(model.module.state_dict(), fn_state)
+        print("")
 
     fn_loss = "loss_acc_values_" + label + ".txt"
     fn_loss = os.path.join(dir, fn_loss)
@@ -360,6 +358,10 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
             print("Initializing PyTorch binary classification version of TestNet1...")
         # model = TestNet1(input_shape=(XBins, YBins, ZBins))
         model = gen_testnet1(input_shape=(XBins, YBins, ZBins))
+    elif modelname == "ClaudeNet":
+        if rank == 0:
+            print("Initializing PyTorch binary classification version of model suggested by Claude AI")
+        model = gen_claudenet1(input_shape=(XBins, YBins, ZBins))
     else:
         raise ValueError("Bad modelname")
 

@@ -32,10 +32,13 @@ def load_data(fn, event_hits, maxevents, minhits=1, maxhits=None, detectortype=N
     G.Initialize()
 
     # Fixed for the time being
+    geometry = "amegox"
     if geometry == "amegox":
         GeometryName = "~/ComPair/Geometry/AMEGO_Midex/AmegoXBase.geo.setup"
     elif geometry == "grips":
         GeometryName = "$(MEGALIB)/resource/examples/geomega/GRIPS/GRIPS.geo.setup"
+    elif geometry == "gripsrealistic":
+        GeometryName = "~/ComPair/eventtypeidentification/resource/GRIPS_realistic.geo.setup"
 
     # Load geometry:
     Geometry = M.MDGeometryQuest()
@@ -135,8 +138,8 @@ def load_data(fn, event_hits, maxevents, minhits=1, maxhits=None, detectortype=N
         if (maxevents != None) and (NEvents >= maxevents):
             break
 
-        # if (maxclass != None) and (len(event_hits[0]) >= maxclass) and (len(event_hits[1]) >= maxclass):
-        if (maxclass != None) and (len(event_hits[0]) >= maxclass) and (len(event_hits[1]) >= maxclass) and (len(event_hits[2] >= maxclass)):
+        if (maxclass != None) and (len(event_hits[0]) >= maxclass) and (len(event_hits[1]) >= maxclass):
+        # if (maxclass != None) and (len(event_hits[0]) >= maxclass) and (len(event_hits[1]) >= maxclass) and (len(event_hits[2] >= maxclass)):
         # hitmax = [len(event_hits[key]) >= maxclass for key in event_hits]
         # if (maxclass != None) and all(hitmax):
             print("Breaking on max number of events for each class")
@@ -223,6 +226,7 @@ if __name__ == '__main__':
     parser.add_argument('-nevents_dataset', dest='nevents_dataset', type=int, action='store', default=500000)
     parser.add_argument('-dtype', dest='dtype', type=int, action='store', help='Detector type number')
     parser.add_argument('-split', dest='split', type=float, action='store', help='Training/Validation split')
+    parser.add_argument("-geometry", dest="geometry", action='store', help="Name of geometry")
 
     args = parser.parse_args()
 
@@ -233,8 +237,8 @@ if __name__ == '__main__':
     print("fns:", fns)
 
     event_hits = {}
-    # event_hits[0] = []
-    # event_hits[1] = []
+    event_hits[0] = []
+    event_hits[1] = []
 
     maxclass = args.nevents_dataset
     for fn in fns:
