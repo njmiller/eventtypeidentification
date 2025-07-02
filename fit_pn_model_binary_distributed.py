@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
+import torch.nn.functional as F
 
 import torch.multiprocessing as mp
 from torch.distributed import init_process_group, destroy_process_group, all_reduce
@@ -21,7 +22,8 @@ import torchmetrics
 import torchmetrics.classification
 
 # from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
-from models import gen_testnet1, VoxelDataset, gen_claudenet1
+from models.pointnet import PointNet, PointNetLoss
+from datasets import AMEGOXPointCloud, pc_collate_fn
 
 class AccuracyLogits(torchmetrics.Metric):
     def __init__(self, **kwargs):
@@ -72,30 +74,19 @@ def load_dataset(fn, extra=False):
     with open(fn, 'rb') as f:
         event_hits, event_types = pickle.load(f)
 
-    XBins, YBins, ZBins = 110, 110, 48
-    XMin, XMax = -55, 55
-    YMin, YMax = -55, 55
-    ZMin, ZMax = 0, 48
-
-    dims = [XBins, YBins, ZBins]
-    xrange = [XMin, XMax]
-    yrange = [YMin, YMax]
-    zrange = [ZMin, ZMax]
-
-    ranges = [xrange, yrange, zrange]
-
     # Split the dataset into training and validation datasets and make sure
     # the same seed is used for all processes.
     split = 0.9
 
-    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=extra)
+    dataset_all = AMEGOXPointCloud(event_hits, event_types)
+
     ntrain = int(len(dataset_all)*split)
     nval = len(dataset_all) - ntrain
     train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
             generator=torch.Generator().manual_seed(42)
     )
 
-    return train_dataset, val_dataset, dims
+    return train_dataset, val_dataset
 
 # Training code in the MNIST example
 def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=50, dry_run=False):
@@ -109,8 +100,7 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
     total_data = torch.tensor(0).to(device)
     
     time0 = datetime.datetime.now()
-    for batch_idx, (data, target, _) in enumerate(train_loader):
-        sum_tot += torch.sum(data)
+    for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
 
         num_data = torch.tensor(len(data)).to(device)
@@ -118,9 +108,11 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
         total_data += num_data
         
         optimizer.zero_grad()
-        output = model(data)
-        
-        loss = loss_fn(output, target.reshape((-1, 1)))
+        output, trans_feat = model(data)
+
+        # loss = loss_fn(output, target.reshape((-1, 1)))
+        loss = loss_fn(output, target.reshape((-1, 1)), trans_feat)
+
         loss_train += loss.item()*len(target)
         loss.backward()
         optimizer.step()
@@ -160,16 +152,16 @@ def test(model, device, test_loader, loss_fn):
     metric_acc = torchmetrics.classification.Accuracy(task="binary").to(device)
     metric_cm = torchmetrics.classification.ConfusionMatrix(task="binary").to(device)
 
-    corr_bins = torch.zeros(11, 2).to(device)
-    all_bins = torch.zeros(11, 2).to(device)
+    # corr_bins = torch.zeros(11, 2).to(device)
+    # all_bins = torch.zeros(11, 2).to(device)
     bins = torch.tensor([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
 
     with torch.no_grad():
-        for data, target, nhits in test_loader:
-            target_cpu = target
+        for data, target in test_loader:
             data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += loss_fn(output, target.view_as(output)).item()*len(target)
+            output, trans_feat = model(data)
+            # test_loss += loss_fn(output, target.view_as(output)).item()*len(target)
+            test_loss += loss_fn(output, target.view_as(output), trans_feat).item()*len(target)
 
             pred = output.ge(0).type(torch.int)
             correct += pred.eq(target.view_as(pred)).sum().item()
@@ -183,12 +175,12 @@ def test(model, device, test_loader, loss_fn):
 
             # Bins calculation. Need to figure out if there is a better way to do this than
             # iterating over all the data
-            nhits_bins = torch.bucketize(nhits, bins)
-            for bin_val, pred_tmp, target_tmp in zip(nhits_bins, pred, target.view_as(pred)):
-                target_tmp = target_tmp.int()
-                all_bins[bin_val, target_tmp] += 1
-                if pred_tmp == target_tmp:
-                    corr_bins[bin_val, target_tmp] += 1
+            # nhits_bins = torch.bucketize(nhits, bins)
+            # for bin_val, pred_tmp, target_tmp in zip(nhits_bins, pred, target.view_as(pred)):
+                # target_tmp = target_tmp.int()
+                # all_bins[bin_val, target_tmp] += 1
+                # if pred_tmp == target_tmp:
+                    # corr_bins[bin_val, target_tmp] += 1
 
     all_reduce(correct)
     correct = correct.cpu().item()
@@ -202,13 +194,13 @@ def test(model, device, test_loader, loss_fn):
     rs_all = rs_all.tolist()
     ps_all = ps_all.tolist()
 
-    all_reduce(all_bins)
-    all_reduce(corr_bins)
-    all_bins = all_bins.cpu()
-    corr_bins = corr_bins.cpu()
+    # all_reduce(all_bins)
+    # all_reduce(corr_bins)
+    # all_bins = all_bins.cpu()
+    # corr_bins = corr_bins.cpu()
 
-    acc_com_bins = (corr_bins[:, 0] / all_bins[:, 0]).tolist()
-    acc_pair_bins = (corr_bins[:, 1] / all_bins[:, 1]).tolist()
+    # acc_com_bins = (corr_bins[:, 0] / all_bins[:, 0]).tolist()
+    # acc_pair_bins = (corr_bins[:, 1] / all_bins[:, 1]).tolist()
 
     test_loss /= len(test_loader.dataset)
 
@@ -218,10 +210,10 @@ def test(model, device, test_loader, loss_fn):
             #   100. * correct / len(test_loader.dataset),
               100. * acc,
               ps_all, rs_all))
-        print("ACC COM:", acc_com_bins)
-        print("ACC PAIR:", acc_pair_bins)
-        print("N COM:", all_bins[:, 0].tolist())
-        print("N PAIR:", all_bins[:, 1].tolist())
+        # print("ACC COM:", acc_com_bins)
+        # print("ACC PAIR:", acc_pair_bins)
+        # print("N COM:", all_bins[:, 0].tolist())
+        # print("N PAIR:", all_bins[:, 1].tolist())
 
     return correct, test_loss
 
@@ -234,9 +226,9 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
     outf = params[3]
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, pin_memory=True, 
-                              sampler=DistributedSampler(train_dataset))
+                              sampler=DistributedSampler(train_dataset), collate_fn=pc_collate_fn)
     test_loader = DataLoader(test_dataset, batch_size=batch_size, pin_memory=True,
-                             sampler=DistributedSampler(test_dataset))
+                             sampler=DistributedSampler(test_dataset), collate_fn=pc_collate_fn)
 
     # Send the model to the correct GPU
     device = rank
@@ -256,7 +248,8 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
     scheduler = CosineAnnealingLR(optimizer, T_max=10, eta_min=1e-5)
 
     # Loss function 
-    loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
+    # loss_fn = torch.nn.BCEWithLogitsLoss().to(device)
+    loss_fn = PointNetLoss(F.binary_cross_entropy_with_logits).to(device)
 
     best_correct = 0
     loss_train = []
@@ -295,8 +288,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
             f.write("\n")
 
 
-def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairNet', batch_size=800,
-                   nxy=110, rangexy=[-55, 55]):
+def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
     ddp_setup(rank, world_size)
 
     if rank == 0:
@@ -311,7 +303,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
 
         print(f"Batch size = {batch_size}")
 
-    epochs = 20
+    epochs = 100
     rate_learning = 0.001
     outf = 'torch_output'
 
@@ -320,33 +312,16 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
     if rank == 0:
         print("Initializing Torch Dataset...")
     
-    # XBins, YBins, ZBins = 110, 110, 48
-    # XBins, YBins, ZBins = 200, 200, 44
-    # XMin, XMax = -45, 45
-    # YMin, YMax = -45, 45
-    
-    XBins, YBins, ZBins = nxy, nxy, 44
-    XMin, XMax = rangexy[0], rangexy[1]
-    YMin, YMax = rangexy[0], rangexy[1]
-    ZMin, ZMax = 0, 48 # Not used for AMEGO-X since z position has 44 unique values
-
-    dims = [XBins, YBins, ZBins]
-    xrange = [XMin, XMax]
-    yrange = [YMin, YMax]
-    zrange = [ZMin, ZMax]
-
-    ranges = [xrange, yrange, zrange]
-
-    print("Ranges:", ranges)
-    print("NBins:", dims)
-
     # Split the dataset into training and validation datasets and make sure
     # the same seed is used for all processes.
     split = 0.9
 
     # dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
-    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=True, experiment="AMEGOX")
+    # dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=True, experiment="AMEGOX")
+    
+    dataset_all = AMEGOXPointCloud(event_hits, event_types)
 
+    # For testing, grab a small subset of the data
     # nsub = 3000
     # dataset_all, _ = random_split(dataset_all, [nsub, len(dataset_all)-nsub])
     
@@ -357,22 +332,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
             generator=torch.Generator().manual_seed(42)
     )
 
-    # Make an instance of the correct model defined in fit_cnn_model_binary.py
-    if modelname == 'ComPairNet':
-        print("Initializing PyTorch binary classification version of ComPairNet...")
-        # model = ComPairNet(input_shape=(XBins, YBins, ZBins))
-        raise ValueError("Don't have ComPairNet right now")
-    elif modelname == 'TestNet1':
-        if rank == 0:
-            print("Initializing PyTorch binary classification version of TestNet1...")
-        # model = TestNet1(input_shape=(XBins, YBins, ZBins))
-        model = gen_testnet1(input_shape=(XBins, YBins, ZBins))
-    elif modelname == "ClaudeNet":
-        if rank == 0:
-            print("Initializing PyTorch binary classification version of model suggested by Claude AI")
-        model = gen_claudenet1(input_shape=(XBins, YBins, ZBins))
-    else:
-        raise ValueError("Bad modelname")
+    model = PointNet()
 
     time0 = datetime.datetime.now()
     train_all(rank, model, params, train_dataset, val_dataset, dir=dir, label=label)
@@ -390,20 +350,11 @@ if __name__ == "__main__":
                         help='Label to add to output data')
     parser.add_argument('-dir', dest='dir', action='store', default="./",
                         help='Directory for output data')
-    parser.add_argument('-model', dest='model', action='store', default='ComPairNet',
-                        help='Model to use')
     parser.add_argument("-batch", dest='batch', action='store', type=int, default=800,
                         help="Batch size")
-    parser.add_argument("-nxy", dest='nxy', action='store', type=int, default=110,
-                        help="Number of bins in X/Y direction")
-    parser.add_argument("-rangexy", dest='rangexy', action='store', nargs='+', type=int, default=[-55, 55],
-                        help="Range for bins (Single value instead of list has the code figure out the limits)")
     
     args = parser.parse_args()
 
     world_size = torch.cuda.device_count()
-    args_input=(world_size, args.fn, args.dir, args.label, args.model, args.batch, args.nxy, args.rangexy)
-    # mp.spawn(load_and_train, args=(world_size, args.fn, args.dir, args.label, args.model, args.batch,
-                                    # args.nxy, args.rangexy),
+    args_input=(world_size, args.fn, args.dir, args.label, args.batch)
     mp.spawn(load_and_train, args=args_input, nprocs=world_size)
-    # load_and_train(args.fn, dir=args.dir, label=args.label, modelname=args.model, batch_size=args.batch)
