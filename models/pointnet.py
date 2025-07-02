@@ -1,8 +1,6 @@
 import torch
 import torch.nn.functional as F
 
-import numpy as np
-
 class STN3d(torch.nn.Module):
     def __init__(self, channel):
         super(STN3d, self).__init__()
@@ -28,20 +26,18 @@ class STN3d(torch.nn.Module):
         B, D, N = x.size()
         
         if mask is None:
-            mask = torch.ones([B, N], dtype=torch.int).to(x.device)
+            mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
         # if npts is None:
             # npts = x.size()[2]*torch.ones(batchsize, dtype=torch.int)
 
         x = self.relu(self.bn1(self.conv1(x)))
-        # x = zeros_tensors(x, npts)
         x = x*mask[:, None, :]
 
         x = self.relu(self.bn2(self.conv2(x)))
-        # x = zeros_tensors(x, npts)
         x = x*mask[:, None, :]
+
         x = self.relu(self.bn3(self.conv3(x)))
-        # x = zeros_tensors(x, npts)
         x = x*mask[:, None, :]
 
         x = torch.max(x, 2, keepdim=True)[0]
@@ -51,10 +47,8 @@ class STN3d(torch.nn.Module):
         x = self.relu(self.bn5(self.fc2(x)))
         x = self.fc3(x)
 
-        iden = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32).view(1, 9).repeat(B, 1)
-        # if x.is_cuda:
-            # iden = iden.cuda()
-        iden = iden.to(x.device)
+        iden = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32, device=x.device).view(1, 9).repeat(B, 1)
+        # iden = iden.to(x.device)
         x = x + iden
         x = x.view(-1, 3, 3)
         return x
@@ -85,7 +79,8 @@ class STNkd(torch.nn.Module):
         B, D, N = x.size()
         
         if mask is None:
-            mask = torch.ones([B, N], dtype=torch.int).to(x.device)
+            # mask = torch.ones([B, N], dtype=torch.int).to(x.device)
+            mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
         x = self.relu(self.bn1(self.conv1(x)))
         x = x*mask[:, None, :]
@@ -104,8 +99,8 @@ class STNkd(torch.nn.Module):
 
         x = self.fc3(x)
 
-        iden = torch.eye(self.k, dtype=torch.float32).flatten().view(1, self.k * self.k).repeat(B, 1)
-        iden = iden.to(x.device)
+        iden = torch.eye(self.k, dtype=torch.float32, device=x.device).flatten().view(1, self.k * self.k).repeat(B, 1)
+        # iden = iden.to(x.device)
 
         x = x + iden
         x = x.view(-1, self.k, self.k)
@@ -140,7 +135,7 @@ class PointNetEncoder(torch.nn.Module):
             # npts = N*torch.ones(B, dtype=torch.int)
         
         if mask is None:
-            mask = torch.ones([B, N], dtype=torch.int).to(x.device)
+            mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
         # Spatial Transformer: Calculate the rotation matrix and apply it to
         # the x,y,z points while leaving the extra features untransformed
@@ -223,9 +218,8 @@ class PointNet(torch.nn.Module):
     
 def feature_transform_regularizer(trans):
     d = trans.size()[1]
-    I = torch.eye(d)[None, :, :]
-    if trans.is_cuda:
-        I = I.cuda()
+    I = torch.eye(d, device=trans.device)[None, :, :]
+    # I = I.to(trans.device)
     loss = torch.mean(torch.norm(torch.bmm(trans, trans.transpose(2, 1)) - I, dim=(1, 2)))
     return loss
 
@@ -242,20 +236,6 @@ class PointNetLoss(torch.nn.Module):
 
         total_loss = loss + mat_diff_loss * self.mat_diff_loss_scale
         return total_loss
-
-'''
-class PointNetLoss2(torch.nn.Module):
-    def __init__(self, mat_diff_loss_scale=0.001):
-        super().__init__()
-        self.mat_diff_loss_scale = mat_diff_loss_scale
-
-    def forward(self, logits, target, trans_feat):
-        loss = F.cross_entropy(logits, target)
-        mat_diff_loss = feature_transform_regularizer(trans_feat)
-
-        total_loss = loss + mat_diff_loss * self.mat_diff_loss_scale
-        return total_loss
-'''
 
 if __name__ == '__main__':
     aaa0 = torch.ones([2, 4, 4])
