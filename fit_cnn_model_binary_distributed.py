@@ -21,7 +21,7 @@ import torchmetrics
 import torchmetrics.classification
 
 # from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
-from models import gen_testnet1, VoxelDataset, gen_claudenet1
+from models.models import gen_testnet1, VoxelDataset, gen_claudenet1
 
 class AccuracyLogits(torchmetrics.Metric):
     def __init__(self, **kwargs):

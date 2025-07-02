@@ -9,6 +9,20 @@ import optax
 # import numpy as np
 
 class STN3d(eqx.nn.Module):
+    conv1 : eqx.nn.Conv1d
+    conv2 : eqx.nn.Conv1d
+    conv3 : eqx.nn.Conv1d
+
+    fc1 : eqx.nn.Linear
+    fc2 : eqx.nn.Linear
+    fc3 : eqx.nn.Linear
+
+    bn1 : eqx.nn.BatchNorm
+    bn2 : eqx.nn.BatchNorm
+    bn3 : eqx.nn.BatchNorm
+    bn4 : eqx.nn.BatchNorm
+    bn5 : eqx.nn.BatchNorm
+
     def __init__(self, channel, key):
         super(STN3d, self).__init__()
 
@@ -67,6 +81,20 @@ class STN3d(eqx.nn.Module):
 
 
 class STNkd(eqx.nn.Module):
+    conv1 : eqx.nn.Conv1d
+    conv2 : eqx.nn.Conv1d
+    conv3 : eqx.nn.Conv1d
+
+    fc1 : eqx.nn.Linear
+    fc2 : eqx.nn.Linear
+    fc3 : eqx.nn.Linear
+
+    bn1 : eqx.nn.BatchNorm
+    bn2 : eqx.nn.BatchNorm
+    bn3 : eqx.nn.BatchNorm
+    bn4 : eqx.nn.BatchNorm
+    bn5 : eqx.nn.BatchNorm
+
     def __init__(self, k=64, key=None):
         super(STNkd, self).__init__()
 
@@ -122,6 +150,8 @@ class STNkd(eqx.nn.Module):
         return x
 
 class PointNetEncoder(eqx.nn.Module):
+    stn : STN3d
+
     def __init__(self, global_feat=True, feature_transform=True, channel=3, key=None):
         super().__init__()
 
