@@ -1,6 +1,23 @@
 import torch
 import torch.nn.functional as F
 
+def generate_mask(x):
+    B, D, N = x.shape
+
+    if D != 4:
+        raise ValueError("Position + Feature Dimension is not 4")
+    
+    mask = torch.zeros([B, N], dtype=torch.int, device=x.device)
+    npts_all = torch.zeros(B, dtype=torch.int, device=x.device)
+
+    # Count number of non-zero energies
+    for i in range(B):
+        npts = torch.count_nonzero(x[i, 3, :])
+        mask[i, :npts] = 1
+        npts_all[i] = npts
+
+    return mask, npts_all
+
 class STN3d(torch.nn.Module):
     def __init__(self, channel):
         super(STN3d, self).__init__()
@@ -131,9 +148,6 @@ class PointNetEncoder(torch.nn.Module):
     def forward(self, x, mask=None):
         B, D, N = x.size()
 
-        # if npts is None:
-            # npts = N*torch.ones(B, dtype=torch.int)
-        
         if mask is None:
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
@@ -205,6 +219,11 @@ class PointNet(torch.nn.Module):
         self.relu = torch.nn.ReLU()
 
     def forward(self, x, mask=None):
+
+        if mask is None:
+            # mask, npts = generate_mask(x)
+            B, D, N = x.shape
+            mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
         x, trans, trans_feat = self.feat(x, mask=mask)
 

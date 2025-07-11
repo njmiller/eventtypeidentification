@@ -162,3 +162,4 @@ cython_debug/
 # NJM Added
 *.pth
 *.onnx
+*.pt

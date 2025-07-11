@@ -149,11 +149,6 @@ class AMEGOXPointCloud(Dataset):
         data_idx = torch.tensor(self.data[idx])
         label_idx = torch.tensor(self.labels[idx])
 
-        # print("AAA:", type(data_idx), type(label_idx))
-        # print("BBB:", data_idx)
-        # print("CCC:", label_idx)
-        # zzz
-
         return data_idx, label_idx
 
 def pc_collate_fn(batch):
@@ -167,6 +162,7 @@ def pc_collate_fn(batch):
             npts = npts_tmp
 
     data_out = torch.zeros([nbatch, 4, npts])
+    mask_out = torch.zeros([nbatch, npts])
     label_out = torch.zeros(nbatch)
     for idx, data in enumerate(batch):
         pts = data[0]
@@ -174,5 +170,7 @@ def pc_collate_fn(batch):
         npts_tmp = len(pts)
         data_out[idx, :, :npts_tmp] = pts.T
         label_out[idx] = label
+        mask_out[idx, :npts_tmp] = 1
 
+    # return data_out, mask_out, label_out
     return data_out, label_out

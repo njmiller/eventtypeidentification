@@ -12,7 +12,7 @@ from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 import torch.nn.functional as F
 
 import torch.multiprocessing as mp
-from torch.distributed import init_process_group, destroy_process_group, all_reduce
+from torch.distributed import init_process_group, destroy_process_group, all_reduce, all_gather
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import random_split
@@ -69,6 +69,17 @@ def blue(x): return '\033[94m' + x + '\033[0m'
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+def gather_and_concat(data, world_size=2):
+
+    device = data.device 
+    data_all = [torch.zeros_like(data, device=device) for _ in range(world_size)]
+
+    all_gather(data_all, data)
+
+    data_all = torch.cat(data_all, dim=0)
+
+    return data_all
 
 def load_dataset(fn, extra=False):
     with open(fn, 'rb') as f:
@@ -142,19 +153,19 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
 
 
 # Testing / Validation code
-def test(model, device, test_loader, loss_fn):
+def test(model, device, test_loader, loss_fn, epoch):
     model.eval()
     test_loss = 0
     correct = torch.tensor(0).to(device)
 
-    # cm = torch.zeros([2, 2]).to(device)
-    # cm = torch.zeros([2, 2]).to(device)
     metric_acc = torchmetrics.classification.Accuracy(task="binary").to(device)
     metric_cm = torchmetrics.classification.ConfusionMatrix(task="binary").to(device)
 
     # corr_bins = torch.zeros(11, 2).to(device)
     # all_bins = torch.zeros(11, 2).to(device)
     bins = torch.tensor([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+    probs = torch.tensor([], device=device)
+    targets = torch.tensor([], device=device)
 
     with torch.no_grad():
         for data, target in test_loader:
@@ -181,6 +192,14 @@ def test(model, device, test_loader, loss_fn):
                 # all_bins[bin_val, target_tmp] += 1
                 # if pred_tmp == target_tmp:
                     # corr_bins[bin_val, target_tmp] += 1
+
+            probs = torch.cat((probs, F.sigmoid(output)))
+            targets = torch.cat((targets, target))
+
+    probs = probs.view_as(targets)    
+
+    probs_all = gather_and_concat(probs).cpu()
+    targets_all = gather_and_concat(targets).cpu()
 
     all_reduce(correct)
     correct = correct.cpu().item()
@@ -210,10 +229,11 @@ def test(model, device, test_loader, loss_fn):
             #   100. * correct / len(test_loader.dataset),
               100. * acc,
               ps_all, rs_all))
-        # print("ACC COM:", acc_com_bins)
-        # print("ACC PAIR:", acc_pair_bins)
-        # print("N COM:", all_bins[:, 0].tolist())
-        # print("N PAIR:", all_bins[:, 1].tolist())
+        fn = "probs_targets_epoch"+str(epoch)+".pt"
+        torch.save({ 
+            'probs': probs_all,
+            'targets': targets_all
+        }, fn)
 
     return correct, test_loss
 
@@ -263,7 +283,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
         loss_train.append(avg_loss_train)
 
         # Run the test set and store the number of correct and the overall average loss
-        curr_correct, avg_loss = test(model, device, test_loader, loss_fn)
+        curr_correct, avg_loss = test(model, device, test_loader, loss_fn, epoch)
         loss_test.append(avg_loss)
         correct_test.append(curr_correct)
 
