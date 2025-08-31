@@ -164,3 +164,7 @@ cython_debug/
 *.onnx
 *.pt
 absorption*
+*.txt
+*.png
+*test*
+*Test*
