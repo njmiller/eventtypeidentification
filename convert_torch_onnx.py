@@ -1,10 +1,6 @@
 import torch
 
-from fit_cnn_model_binary import ComPairNet
-
-# nclasses = 2
-# model = tm.ComPairNet(num_classes=nclasses, input_shape=(110, 110, 48))
-model = ComPairNet(input_shape=(110, 110, 48))
+from models.pointnet import PointNet
 
 fn = "test_torch_model_params_May14.pth"
 model.load_state_dict(torch.load(fn))

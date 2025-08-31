@@ -296,6 +296,17 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
             fn_state = "test_torch_model_params_" + label + ".pth"
             fn_state = os.path.join(dir, fn_state)
             torch.save(model.module.state_dict(), fn_state)
+
+            # Put in a specific tensor to make sure model is loaded correctly in different code
+            test1 = torch.zeros([1, 4, 3])
+            test1[0, :, 0] = 1
+            test1[0, :, 1] = 2
+            test1[0, :, 2] = 2.5
+            model.eval()
+            with torch.no_grad():
+                logits, trans_feat = model(test1)
+                print("VALS FOR LOADING TEST:", logits, torch.sum(trans_feat))
+            model.train()
         print("")
 
     fn_loss = "loss_acc_values_" + label + ".txt"
@@ -352,7 +363,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
             generator=torch.Generator().manual_seed(42)
     )
 
-    model = PointNet()
+    model = PointNet(add_nhits=True)
 
     time0 = datetime.datetime.now()
     train_all(rank, model, params, train_dataset, val_dataset, dir=dir, label=label)

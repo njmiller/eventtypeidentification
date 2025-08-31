@@ -4,8 +4,8 @@ import torch.nn.functional as F
 def generate_mask(x):
     B, D, N = x.shape
 
-    if D != 4:
-        raise ValueError("Position + Feature Dimension is not 4")
+    # if D != 4:
+        # raise ValueError("Position + Feature Dimension is not 4")
     
     mask = torch.zeros([B, N], dtype=torch.int, device=x.device)
     npts_all = torch.zeros(B, dtype=torch.int, device=x.device)
@@ -156,12 +156,15 @@ class PointNetEncoder(torch.nn.Module):
         trans = self.stn(x, mask=mask)
 
         x = x.transpose(2, 1)
-        if D > 3:
-            feature = x[:, :, 3:]
-            x = x[:, :, :3]
+        # if D > 3:
+        feature = x[:, :, 3:]
+        x = x[:, :, :3]
+        
         x = torch.bmm(x, trans)
-        if D > 3:
-            x = torch.cat([x, feature], dim=2)
+        
+        # if D > 3:
+        x = torch.cat([x, feature], dim=2)
+        
         x = x.transpose(2, 1)
 
 
@@ -172,14 +175,14 @@ class PointNetEncoder(torch.nn.Module):
         x = F.relu(self.bn1b(self.conv1b(x)))
         x = x*mask[:, None, :]
 
-
-        if self.feature_transform:
-            trans_feat = self.fstn(x, mask=mask)
-            x = x.transpose(2, 1)
-            x = torch.bmm(x, trans_feat)
-            x = x.transpose(2, 1)
-        else:
-            trans_feat = None
+        # Feature transform layer
+        # if self.feature_transform:
+        trans_feat = self.fstn(x, mask=mask)
+        x = x.transpose(2, 1)
+        x = torch.bmm(x, trans_feat)
+        x = x.transpose(2, 1)
+        # else:
+            # trans_feat = None
 
         pointfeat = x
 
@@ -204,10 +207,12 @@ class PointNetEncoder(torch.nn.Module):
             return torch.cat([x, pointfeat], 1), trans, trans_feat
 
 class PointNet(torch.nn.Module):
-    def __init__(self, nclass=1):
+    def __init__(self, nclass=1, add_nhits=False):
         super().__init__()
         self.feat = PointNetEncoder(global_feat=True, feature_transform=True, channel=4)
-        self.fc1 = torch.nn.Linear(1024, 512)
+
+        nlin = 1025 if add_nhits else 1024
+        self.fc1 = torch.nn.Linear(nlin, 512)
         self.fc2 = torch.nn.Linear(512, 256)
         self.fc3 = torch.nn.Linear(256, nclass)
 
@@ -218,6 +223,8 @@ class PointNet(torch.nn.Module):
         
         self.relu = torch.nn.ReLU()
 
+        self.add_nhits = add_nhits
+
     def forward(self, x, mask=None):
 
         if mask is None:
@@ -225,7 +232,17 @@ class PointNet(torch.nn.Module):
             B, D, N = x.shape
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
+        # Get the number of hits for each entry in the batch
+        tmp = x[:, 3, :]
+        nhits = torch.count_nonzero(tmp, dim=1)
+
         x, trans, trans_feat = self.feat(x, mask=mask)
+
+
+        # Appending the nhits value to the input to the linear layers
+        if self.add_nhits:
+            nhits2 = nhits.unsqueeze(1)
+            x = torch.cat([x, nhits2], dim=1)
 
         # Already max pooled over points so mask is now irrelevant
 

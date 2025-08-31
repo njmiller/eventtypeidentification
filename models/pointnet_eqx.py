@@ -8,7 +8,7 @@ import optax
 
 # import numpy as np
 
-class STN3d(eqx.nn.Module):
+class STN3d(eqx.Module):
     conv1 : eqx.nn.Conv1d
     conv2 : eqx.nn.Conv1d
     conv3 : eqx.nn.Conv1d
@@ -36,41 +36,48 @@ class STN3d(eqx.nn.Module):
         self.fc2 = eqx.nn.Linear(512, 256, key=keys[4])
         self.fc3 = eqx.nn.Linear(256, 9, key=keys[5])
         
-        self.relu = jax.nn.relu
-
         self.bn1 = eqx.nn.BatchNorm(64, axis_name="batch")
         self.bn2 = eqx.nn.BatchNorm(128, axis_name="batch")
         self.bn3 = eqx.nn.BatchNorm(1024, axis_name="batch")
         self.bn4 = eqx.nn.BatchNorm(512, axis_name="batch")
         self.bn5 = eqx.nn.BatchNorm(256, axis_name="batch")
 
-    def __call__(self, x, mask=None):
+    def __call__(self, x, state, npts=None):
 
         # batchsize = x.size()[0]
-        B, D, N = x.size()
-        
-        if mask is None:
-            mask = jnp.ones([B, N], dtype=jnp.int)
+        D, N = x.size()
 
-        # if npts is None:
-            # npts = x.size()[2]*torch.ones(batchsize, dtype=torch.int)
+        if npts is not None:
+            x = x[:, :npts]
 
-        x = self.relu(self.bn1(self.conv1(x)))
-        # x = zeros_tensors(x, npts)
-        x = x*mask[:, None, :]
+        x = self.conv1(x)
+        x, state = self.bn1(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn1(self.conv1(x)))
 
-        x = self.relu(self.bn2(self.conv2(x)))
-        # x = zeros_tensors(x, npts)
-        x = x*mask[:, None, :]
-        x = self.relu(self.bn3(self.conv3(x)))
-        # x = zeros_tensors(x, npts)
-        x = x*mask[:, None, :]
+        x = self.conv2(x)
+        x, state = self.bn2(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn2(self.conv2(x)))
+
+        x = self.conv3(x)
+        x, state = self.bn3(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn3(self.conv3(x)))
 
         x = jnp.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
 
-        x = self.relu(self.bn4(self.fc1(x)))
-        x = self.relu(self.bn5(self.fc2(x)))
+        x = self.fc1(x)
+        x, state = self.bn4(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn4(self.fc1(x)))
+
+        x = self.fc2(x)
+        x, state = self.bn5(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn5(self.fc2(x)))
+        
         x = self.fc3(x)
 
         # iden = Variable(torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32)).view(1, 9).repeat(B, 1)
@@ -80,7 +87,7 @@ class STN3d(eqx.nn.Module):
         return x
 
 
-class STNkd(eqx.nn.Module):
+class STNkd(eqx.Module):
     conv1 : eqx.nn.Conv1d
     conv2 : eqx.nn.Conv1d
     conv3 : eqx.nn.Conv1d
@@ -95,6 +102,8 @@ class STNkd(eqx.nn.Module):
     bn4 : eqx.nn.BatchNorm
     bn5 : eqx.nn.BatchNorm
 
+    k : int
+
     def __init__(self, k=64, key=None):
         super(STNkd, self).__init__()
 
@@ -108,8 +117,6 @@ class STNkd(eqx.nn.Module):
         self.fc2 = eqx.nn.Linear(512, 256, key=keys[4])
         self.fc3 = eqx.nn.Linear(256, k * k, key=keys[5])
         
-        self.relu = jax.nn.relu
-
         self.bn1 = eqx.nn.BatchNorm(64, axis_name="batch")
         self.bn2 = eqx.nn.BatchNorm(128, axis_name="batch")
         self.bn3 = eqx.nn.BatchNorm(1024, axis_name="batch")
@@ -118,27 +125,42 @@ class STNkd(eqx.nn.Module):
 
         self.k = k
 
-    def __call__(self, x, mask=None):
+    def __call__(self, x, state, mask=None):
         B, D, N = x.size()
         
         if mask is None:
             mask = jnp.ones([B, N], dtype=jnp.int)
 
-        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.conv1(x)
+        x, state = self.bn1(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn1(self.conv1(x)))
         x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
-        x = self.relu(self.bn2(self.conv2(x)))
+
+        x = self.conv2(x)
+        x, state = self.bn2(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn2(self.conv2(x)))
         x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
-        x = self.relu(self.bn3(self.conv3(x)))
+
+        x = self.conv3(x)
+        x, state = self.bn3(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn3(self.conv3(x)))
         x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
 
         x = jnp.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
 
-        x = self.relu(self.bn4(self.fc1(x)))
-        x = self.relu(self.bn5(self.fc2(x)))
+        x = self.fc1(x)
+        x, state = self.bn4(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn4(self.fc1(x)))
+
+        x = self.fc2(x)
+        x, state = self.bn5(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn5(self.fc2(x)))
 
         x = self.fc3(x)
 
@@ -149,8 +171,25 @@ class STNkd(eqx.nn.Module):
         x = x.view(-1, self.k, self.k)
         return x
 
-class PointNetEncoder(eqx.nn.Module):
+class PointNetEncoder(eqx.Module):
     stn : STN3d
+
+    conv1 : eqx.nn.Conv1d
+    conv1b : eqx.nn.Conv1d
+    conv2a : eqx.nn.Conv1d
+    conv2 : eqx.nn.Conv1d
+    conv3 : eqx.nn.Conv1d
+
+    bn1 : eqx.nn.BatchNorm
+    bn1b : eqx.nn.BatchNorm
+    bn2a : eqx.nn.BatchNorm
+    bn2 : eqx.nn.BatchNorm
+    bn3 : eqx.nn.BatchNorm
+
+    fstn : STNkd
+
+    global_feat : bool
+    feature_transform : bool
 
     def __init__(self, global_feat=True, feature_transform=True, channel=3, key=None):
         super().__init__()
@@ -176,7 +215,7 @@ class PointNetEncoder(eqx.nn.Module):
         if self.feature_transform:
             self.fstn = STNkd(k=64, key=keys[6])
 
-    def __call__(self, x, mask=None):
+    def __call__(self, x, state, mask=None):
         B, D, N = x.size()
 
         # if npts is None:
@@ -199,12 +238,17 @@ class PointNetEncoder(eqx.nn.Module):
             x = jnp.concatenate([x, feature], axis=2)
         x = x.transpose(2, 1)
 
-
-        x = jax.nn.relu(self.bn1(self.conv1(x)))
+        x = self.conv1(x)
+        x, state = self.bn1(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn1(self.conv1(x)))
         x = x*mask[:, None, :]
         # x = zeros_tensors(x, npts)
         
-        x = jax.nn.relu(self.bn1b(self.conv1b(x)))
+        x = self.conv1b(x)
+        x, state = self.bn1b(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn1b(self.conv1b(x)))
         x = x*mask[:, None, :]
 
 
@@ -219,15 +263,22 @@ class PointNetEncoder(eqx.nn.Module):
 
         pointfeat = x
 
-        x = jax.nn.relu(self.bn2a(self.conv2a(x)))
+        x = self.conv2a(x)
+        x, state = self.bn2a(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn2a(self.conv2a(x)))
         x = x*mask[:, None, :]
         
-        x = jax.nn.relu(self.bn2(self.conv2(x)))
+        x = self.conv2(x)
+        x, state = self.bn2(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn2(self.conv2(x)))
         x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
-        x = self.bn3(self.conv3(x))
+
+        x = self.conv3(x)
+        x, state = self.bn3(x, state)
+        # x = self.bn3(self.conv3(x))
         x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
 
         # Max pooling???
         x = jnp.max(x, 2, keepdim=True)[0]
@@ -239,7 +290,18 @@ class PointNetEncoder(eqx.nn.Module):
             x = x.view(-1, 1024, 1).repeat(1, 1, N)
             return jnp.concatenate([x, pointfeat], 1), trans, trans_feat
 
-class PointNet(eqx.nn.Module):
+class PointNet(eqx.Module):
+    feat : PointNetEncoder
+    
+    fc1 : eqx.nn.Linear
+    fc2 : eqx.nn.Linear
+    fc3 : eqx.nn.Linear
+
+    dropout : eqx.nn.Dropout
+
+    bn1 : eqx.nn.BatchNorm
+    bn2 : eqx.nn.BatchNorm
+
     def __init__(self, nclass=1, key=None):
         super().__init__()
 
@@ -255,16 +317,22 @@ class PointNet(eqx.nn.Module):
         self.bn1 = eqx.nn.BatchNorm(512, axis_name="batch")
         self.bn2 = eqx.nn.BatchNorm(256, axis_name="batch")
         
-        self.relu = jax.nn.relu
-
-    def __call__(self, x, mask=None, key=None):
+    def __call__(self, x, state, mask=None, key=None):
 
         x, trans, trans_feat = self.feat(x, mask=mask)
 
         # Already max pooled over points so mask is now irrelevant
 
-        x = self.relu(self.bn1(self.fc1(x)))
-        x = self.relu(self.bn2(self.dropout(self.fc2(x), key=key)))
+        x = self.fc1(x)
+        x, state = self.bn1(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn1(self.fc1(x)))
+
+        x = self.fc2(x)
+        x = self.dropout(x, key=key)
+        x, state = self.bn2(x, state)
+        x = jax.nn.relu(x)
+        # x = jax.nn.relu(self.bn2(self.dropout(self.fc2(x), key=key)))
         x = self.fc3(x)
 
         return x, trans_feat
@@ -275,7 +343,7 @@ def feature_transform_regularizer(trans):
     loss = jnp.mean(jnp.linalg.norm(jnp.matmul(trans, trans.transpose(2, 1)) - I, dim=(1, 2)))
     return loss
 
-class PointNetLoss(eqx.nn.Module):
+class PointNetLoss(eqx.Module):
     def __init__(self, loss_fn, mat_diff_loss_scale=0.001):
         super().__init__()
         self.loss_fn = loss_fn
@@ -289,35 +357,33 @@ class PointNetLoss(eqx.nn.Module):
         total_loss = loss + mat_diff_loss * self.mat_diff_loss_scale
         return total_loss
 
-class PointNetLoss2(eqx.nn.Module):
-    def __init__(self, mat_diff_loss_scale=0.001):
-        super().__init__()
-        self.mat_diff_loss_scale = mat_diff_loss_scale
-
-    def __call__(self, logits, target, trans_feat):
-        loss = optax.softmax_cross_entropy(logits, target)
-        mat_diff_loss = feature_transform_regularizer(trans_feat)
-
-        total_loss = loss + mat_diff_loss * self.mat_diff_loss_scale
-        return total_loss
-
 if __name__ == '__main__':
-    aaa0 = jnp.ones([2, 4, 4])
-    aaa2 = jnp.ones([2, 4, 2])
+    import numpy as np
+    
+    key = jax.random.key(42)
+    model_key, train_key = jax.random.split(key)
 
-    aaa1 = jnp.ones_like(aaa0)
+    aaa0 = np.ones([2, 4, 4])
+    aaa2 = np.ones([2, 4, 2])
+
+    aaa1 = np.ones_like(aaa0)
     aaa1[1, :, 3:] = 0
 
-    model = PointNet()
+    aaa0 = jnp.array(aaa0)
+    aaa1 = jnp.array(aaa0)
+    aaa2 = jnp.array(aaa0)
+
+    model = PointNet(key=model_key)
     model.eval()
 
-    model0 = PointNetEncoder(global_feat=True, feature_transform=True, channel=4)
-    model0.eval()
+    # model0 = PointNetEncoder(global_feat=True, feature_transform=True, channel=4)
+    # model0.eval()
 
     tmp0, tmp1 = model(aaa0)
 
-    mask = jnp.ones([2, 4], dtype=jnp.int)
+    mask = np.ones([2, 4], dtype=jnp.int)
     mask[1, 2:] = 0
+    mask = jnp.array(mask)
 
     tmp2, tmp3 = model(aaa1, mask=mask)
     tmp4, tmp5 = model(aaa2)
