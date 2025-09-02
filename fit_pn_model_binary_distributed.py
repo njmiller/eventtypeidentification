@@ -25,34 +25,6 @@ import torchmetrics.classification
 from models.pointnet import PointNet, PointNetLoss
 from datasets import AMEGOXPointCloud, pc_collate_fn
 
-class AccuracyLogits(torchmetrics.Metric):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.add_state("correct", default=torch.zeros(4, dtype=torch.int64), dist_reduce_fx="sum")
-        self.add_state("total", default=torch.zeros(4, dtype=torch.int64), dist_reduce_fx="sum")
-
-    def update(self, logits: torch.Tensor, target: torch.Tensor) -> None:
-        # logits, target = self._input_format(logits, target)
-        if logits.shape != target.shape:
-            raise ValueError("logits and target must have same shape")
-
-        logit_num = 1
-        idx = logits <= -logit_num
-        self.correct[0] += torch.sum(target[idx] == 0)
-        self.total[0] += target[idx].numel()
-        idx = torch.logical_and(logits > -logit_num, logits <= 0)
-        self.correct[1] += torch.sum(target[idx] == 0) 
-        self.total[1] += target[idx].numel()
-        idx = torch.logical_and(logits > 0, logits <= logit_num)
-        self.correct[2] += torch.sum(target[idx] == 1)
-        self.total[2] += target[idx].numel()
-        idx = logit_num < logits
-        self.correct[3] += torch.sum(target[idx] == 1) 
-        self.total[3] += target[idx].numel()
-
-    def compute(self) -> torch.Tensor:
-        return self.correct.float() / self.total
-
 def ddp_setup(rank: int, world_size: int):
     """
     Args:
@@ -65,10 +37,9 @@ def ddp_setup(rank: int, world_size: int):
     torch.cuda.set_device(rank)
 
 
-def blue(x): return '\033[94m' + x + '\033[0m'
-
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
 
 def gather_and_concat(data, world_size=2):
 
@@ -104,7 +75,6 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
     model.train()
 
     loss_train = 0
-    sum_tot = 0
 
     num_world = torch.tensor(1).to(device)
     all_reduce(num_world)
@@ -148,7 +118,6 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
         
     loss_train /= len(train_loader.dataset)
 
-    # print('')
     return loss_train
 
 
@@ -171,27 +140,16 @@ def test(model, device, test_loader, loss_fn, epoch):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output, trans_feat = model(data)
-            # test_loss += loss_fn(output, target.view_as(output)).item()*len(target)
+
             test_loss += loss_fn(output, target.view_as(output), trans_feat).item()*len(target)
 
             pred = output.ge(0).type(torch.int)
             correct += pred.eq(target.view_as(pred)).sum().item()
-            # correct_ident = pred.eq(target.view_as(pred))
-            # correct += correct_ident.sum().item()
 
             # Torchmetrics inputs are opposite order as scikit-learn
             # cm += torchmetrics.functional.confusion_matrix(pred, target.view_as(pred), task="binary")
             acc = metric_acc(pred, target.view_as(pred))
             cm = metric_cm(pred, target.view_as(pred))
-
-            # Bins calculation. Need to figure out if there is a better way to do this than
-            # iterating over all the data
-            # nhits_bins = torch.bucketize(nhits, bins)
-            # for bin_val, pred_tmp, target_tmp in zip(nhits_bins, pred, target.view_as(pred)):
-                # target_tmp = target_tmp.int()
-                # all_bins[bin_val, target_tmp] += 1
-                # if pred_tmp == target_tmp:
-                    # corr_bins[bin_val, target_tmp] += 1
 
             probs = torch.cat((probs, F.sigmoid(output)))
             targets = torch.cat((targets, target))
@@ -213,20 +171,11 @@ def test(model, device, test_loader, loss_fn, epoch):
     rs_all = rs_all.tolist()
     ps_all = ps_all.tolist()
 
-    # all_reduce(all_bins)
-    # all_reduce(corr_bins)
-    # all_bins = all_bins.cpu()
-    # corr_bins = corr_bins.cpu()
-
-    # acc_com_bins = (corr_bins[:, 0] / all_bins[:, 0]).tolist()
-    # acc_pair_bins = (corr_bins[:, 1] / all_bins[:, 1]).tolist()
-
     test_loss /= len(test_loader.dataset)
 
     if device == 0:
         print('\nTest set: Loss: {:.4f}, Acc: {}/{} ({:.0f}%), Prec: {}, Rec: {}'.format(
               test_loss, correct, len(test_loader.dataset),
-            #   100. * correct / len(test_loader.dataset),
               100. * acc,
               ps_all, rs_all))
         fn = "probs_targets_epoch"+str(epoch)+".pt"
@@ -326,11 +275,11 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
         print("Starting PyTorch training...")
         print("Loading data...", fn)
 
-    with open(fn, 'rb') as f:
-        event_hits, event_types = pickle.load(f)
+    # with open(fn, 'rb') as f:
+        # event_hits, event_types = pickle.load(f)
     
     if rank == 0:
-        print(f"Dataset contains {len(event_hits)} events")
+        # print(f"Dataset contains {len(event_hits)} events")
 
         print(f"Batch size = {batch_size}")
 
@@ -345,25 +294,25 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
     
     # Split the dataset into training and validation datasets and make sure
     # the same seed is used for all processes.
-    split = 0.9
+    # split = 0.9
 
-    # dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
-    # dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=True, experiment="AMEGOX")
+    # dataset_all = AMEGOXPointCloud(event_hits, event_types)
+
+    # ntrain = int(len(dataset_all)*split)
+    # nval = len(dataset_all) - ntrain
+
+    # train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
+            # generator=torch.Generator().manual_seed(42)
+    # )
     
-    dataset_all = AMEGOXPointCloud(event_hits, event_types)
+    train_dataset, val_dataset = load_dataset(fn)
 
-    # For testing, grab a small subset of the data
-    # nsub = 3000
-    # dataset_all, _ = random_split(dataset_all, [nsub, len(dataset_all)-nsub])
-    
-    ntrain = int(len(dataset_all)*split)
-    nval = len(dataset_all) - ntrain
+    if rank == 0:
+        print(f"Training dataset contains {len(train_dataset)} events")
+        print(f"Validation dataset contains {len(val_dataset)} events")
 
-    train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
-            generator=torch.Generator().manual_seed(42)
-    )
 
-    model = PointNet(add_nhits=True)
+    model = PointNet(add_nhits=False)
 
     time0 = datetime.datetime.now()
     train_all(rank, model, params, train_dataset, val_dataset, dir=dir, label=label)
