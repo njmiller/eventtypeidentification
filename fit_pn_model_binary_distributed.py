@@ -25,6 +25,13 @@ import torchmetrics.classification
 from models.pointnet import PointNet, PointNetLoss
 from datasets import AMEGOXPointCloud, pc_collate_fn
 
+MASTER_PORT = "12355"
+TRAIN_VAL_SPLIT = 0.9
+DEFAULT_SEED = 42
+DEFAULT_EPOCHS = 100
+DEFAULT_LR = 0.001
+LOG_INTERVAL = 50
+
 def ddp_setup(rank: int, world_size: int):
     """
     Args:
@@ -32,7 +39,7 @@ def ddp_setup(rank: int, world_size: int):
         world_size: Total number of processes
     """
     os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "12355"
+    os.environ["MASTER_PORT"] = MASTER_PORT
     init_process_group(backend="nccl", rank=rank, world_size=world_size)
     torch.cuda.set_device(rank)
 
@@ -58,14 +65,12 @@ def load_dataset(fn, extra=False):
 
     # Split the dataset into training and validation datasets and make sure
     # the same seed is used for all processes.
-    split = 0.9
-
     dataset_all = AMEGOXPointCloud(event_hits, event_types)
 
-    ntrain = int(len(dataset_all)*split)
+    ntrain = int(len(dataset_all)*TRAIN_VAL_SPLIT)
     nval = len(dataset_all) - ntrain
     train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
-            generator=torch.Generator().manual_seed(42)
+            generator=torch.Generator().manual_seed(DEFAULT_SEED)
     )
 
     return train_dataset, val_dataset
@@ -130,9 +135,6 @@ def test(model, device, test_loader, loss_fn, epoch):
     metric_acc = torchmetrics.classification.Accuracy(task="binary").to(device)
     metric_cm = torchmetrics.classification.ConfusionMatrix(task="binary").to(device)
 
-    # corr_bins = torch.zeros(11, 2).to(device)
-    # all_bins = torch.zeros(11, 2).to(device)
-    bins = torch.tensor([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
     probs = torch.tensor([], device=device)
     targets = torch.tensor([], device=device)
 
@@ -283,8 +285,8 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
 
         print(f"Batch size = {batch_size}")
 
-    epochs = 100
-    rate_learning = 0.001
+    epochs = DEFAULT_EPOCHS
+    rate_learning = DEFAULT_LR
     outf = 'torch_output'
 
     params = [batch_size, epochs, rate_learning, outf]
@@ -292,19 +294,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
     if rank == 0:
         print("Initializing Torch Dataset...")
     
-    # Split the dataset into training and validation datasets and make sure
-    # the same seed is used for all processes.
-    # split = 0.9
-
-    # dataset_all = AMEGOXPointCloud(event_hits, event_types)
-
-    # ntrain = int(len(dataset_all)*split)
-    # nval = len(dataset_all) - ntrain
-
-    # train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
-            # generator=torch.Generator().manual_seed(42)
-    # )
-    
+    # Load the training and validation datasets
     train_dataset, val_dataset = load_dataset(fn)
 
     if rank == 0:
