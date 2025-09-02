@@ -2,7 +2,6 @@ import pickle
 import datetime
 import argparse
 import os
-import sys
 
 import torch
 
@@ -106,17 +105,10 @@ def train(model, device, train_loader, optimizer, epoch, loss_fn, log_interval=5
         time_elapsed = time1-time0
         
         if device == 0 and (batch_idx % log_interval == 0):
-            percent_finished = 100. * batch_idx / len(train_loader)
-            if percent_finished > 0:
-                time_to_finish = time_elapsed * (100 - percent_finished) / percent_finished
-            else:
-                time_to_finish = time_elapsed * 10000
-            print('                                                                                                   ', end='\r')
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\t{} : {}\tLoss: {:.6f}'.format(
-                epoch, total_data.item(), len(train_loader.dataset),
-                # epoch, batch_idx * len(data), len(train_loader.dataset),
-                percent_finished, time_elapsed, time_to_finish, loss.item()), end='\r')
-            sys.stdout.flush()
+            percent = 100. * batch_idx / len(train_loader)
+            eta = time_elapsed * (100-percent) / percent if percent > 0 else datetime.timedelta(hours=10)
+            print(f'\rTrain Epoch: {epoch} [{total_data.item()}/{len(train_loader.dataset)} '
+                  f'({percent:.0f}%)] Loss: {loss.item():.6f} ETA: {eta}', end='', flush=True)
             if dry_run:
                 break
     
@@ -176,10 +168,9 @@ def test(model, device, test_loader, loss_fn, epoch):
     test_loss /= len(test_loader.dataset)
 
     if device == 0:
-        print('\nTest set: Loss: {:.4f}, Acc: {}/{} ({:.0f}%), Prec: {}, Rec: {}'.format(
-              test_loss, correct, len(test_loader.dataset),
-              100. * acc,
-              ps_all, rs_all))
+        percent = 100. * acc
+        print(f'\nTest set: Loss: {test_loss:.4f}, Acc: {correct}/{len(test_loader.dataset)} '
+              f'({percent:.0f}%), Prec: {ps_all}, Rec: {rs_all}')
         fn = "probs_targets_epoch"+str(epoch)+".pt"
         torch.save({ 
             'probs': probs_all,
@@ -205,9 +196,6 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
     device = rank
     model = model.to(rank)
     model = DDP(model, device_ids=[rank])
-
-    # Is torch.compile worth it here?
-    # model = torch.compile(model)
 
     # optimizer = optim.Adadelta(model.parameters(), lr=rate_learning)
     optimizer = optim.Adam(model.parameters(), lr=rate_learning)
@@ -277,12 +265,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
         print("Starting PyTorch training...")
         print("Loading data...", fn)
 
-    # with open(fn, 'rb') as f:
-        # event_hits, event_types = pickle.load(f)
-    
     if rank == 0:
-        # print(f"Dataset contains {len(event_hits)} events")
-
         print(f"Batch size = {batch_size}")
 
     epochs = DEFAULT_EPOCHS
