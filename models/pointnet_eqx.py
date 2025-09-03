@@ -26,7 +26,7 @@ class STN3d(eqx.Module):
     def __init__(self, channel, key):
         super(STN3d, self).__init__()
 
-        keys = jax.random.split(key, 3)
+        keys = jax.random.split(key, 6)
 
         self.conv1 = eqx.nn.Conv1d(in_channels=channel, out_channels=64, kernel_size=1, padding=1, key=keys[0])
         self.conv2 = eqx.nn.Conv1d(in_channels=64, out_channels=128, kernel_size=1, padding=1, key=keys[1])
@@ -45,7 +45,7 @@ class STN3d(eqx.Module):
     def __call__(self, x, state, npts=None):
 
         # batchsize = x.size()[0]
-        D, N = x.size()
+        D, N = x.shape
 
         if npts is not None:
             x = x[:, :npts]
@@ -66,6 +66,7 @@ class STN3d(eqx.Module):
         # x = jax.nn.relu(self.bn3(self.conv3(x)))
 
         x = jnp.max(x, 2, keepdim=True)[0]
+        print("CHECK", x.shape)
         x = x.view(-1, 1024)
 
         x = self.fc1(x)
@@ -81,9 +82,10 @@ class STN3d(eqx.Module):
         x = self.fc3(x)
 
         # iden = Variable(torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32)).view(1, 9).repeat(B, 1)
-        iden = jnp.array([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=jnp.float32).view(1, 9).repeat(B, 1)
+        iden = jnp.array([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=jnp.float32).view(1, 9)
         x = x + iden
-        x = x.view(-1, 3, 3)
+        x = x.view(3, 3)
+
         return x
 
 
