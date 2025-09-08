@@ -1,6 +1,18 @@
 import torch
 import torch.nn.functional as F
 
+DEFAULT_DROPOUT = 0.4
+DEFAULT_MAT_DIFF_SCALE = 0.001
+IDENTITY_3X3 = [1, 0, 0, 0, 1, 0, 0, 0, 1]
+
+def _layer_bn_relu_mask(x, nn, bn, mask=None):
+    x = F.relu(bn(nn(x)))
+
+    if mask is not None:
+        x = x * mask[:, None, :]
+
+    return x
+
 def generate_mask(x):
     B, D, N = x.shape
 
@@ -17,6 +29,9 @@ def generate_mask(x):
         npts_all[i] = npts
 
     return mask, npts_all
+
+def generate_mask_simple(x):
+    return (x[:, -1, :] != 0).int()
 
 class STN3d(torch.nn.Module):
     def __init__(self, channel):
@@ -38,34 +53,34 @@ class STN3d(torch.nn.Module):
         self.bn5 = torch.nn.BatchNorm1d(256)
 
     def forward(self, x, mask=None):
-
-        # batchsize = x.size()[0]
         B, D, N = x.size()
         
         if mask is None:
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
-        # if npts is None:
-            # npts = x.size()[2]*torch.ones(batchsize, dtype=torch.int)
+        # x = self.relu(self.bn1(self.conv1(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv1, self.bn1, mask=mask)
 
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = x*mask[:, None, :]
+        # x = self.relu(self.bn2(self.conv2(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv2, self.bn2, mask=mask)
 
-        x = self.relu(self.bn2(self.conv2(x)))
-        x = x*mask[:, None, :]
-
-        x = self.relu(self.bn3(self.conv3(x)))
-        x = x*mask[:, None, :]
+        # x = self.relu(self.bn3(self.conv3(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv3, self.bn3, mask=mask)
 
         x = torch.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
 
-        x = self.relu(self.bn4(self.fc1(x)))
-        x = self.relu(self.bn5(self.fc2(x)))
+        # x = self.relu(self.bn4(self.fc1(x)))
+        # x = self.relu(self.bn5(self.fc2(x)))
+        x = _layer_bn_relu_mask(x, self.fc1, self.bn4)
+        x = _layer_bn_relu_mask(x, self.fc2, self.bn5)
         x = self.fc3(x)
 
-        iden = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32, device=x.device).view(1, 9).repeat(B, 1)
-        # iden = iden.to(x.device)
+        # iden = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32, device=x.device).view(1, 9).repeat(B, 1)
+        iden = torch.eye(3, dtype=torch.float32, device=x.device).flatten().view(1, 9).repeat(B, 1)
         x = x + iden
         x = x.view(-1, 3, 3)
         return x
@@ -92,33 +107,39 @@ class STNkd(torch.nn.Module):
 
         self.k = k
 
+        self.register_buffer("identity_kxk",
+                             torch.eye(k).view(1, k*k))
+
     def forward(self, x, mask=None):
         B, D, N = x.size()
         
         if mask is None:
-            # mask = torch.ones([B, N], dtype=torch.int).to(x.device)
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = x*mask[:, None, :]
+        # x = self.relu(self.bn1(self.conv1(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv1, self.bn1, mask=mask)
 
-        x = self.relu(self.bn2(self.conv2(x)))
-        x = x*mask[:, None, :]
+        # x = self.relu(self.bn2(self.conv2(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv2, self.bn2, mask=mask)
         
-        x = self.relu(self.bn3(self.conv3(x)))
-        x = x*mask[:, None, :]
+        # x = self.relu(self.bn3(self.conv3(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv3, self.bn3, mask=mask)
 
         x = torch.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
 
-        x = self.relu(self.bn4(self.fc1(x)))
-        x = self.relu(self.bn5(self.fc2(x)))
+        # x = self.relu(self.bn4(self.fc1(x)))
+        # x = self.relu(self.bn5(self.fc2(x)))
+        x = _layer_bn_relu_mask(x, self.fc1, self.bn4)
+        x = _layer_bn_relu_mask(x, self.fc2, self.bn5)
 
         x = self.fc3(x)
 
-        iden = torch.eye(self.k, dtype=torch.float32, device=x.device).flatten().view(1, self.k * self.k).repeat(B, 1)
-        # iden = iden.to(x.device)
-
+        # iden = torch.eye(self.k, dtype=torch.float32, device=x.device).view(1, self.k * self.k).repeat(B, 1)
+        iden = self.identity_kxk.repeat(B, 1).to(x.device)
         x = x + iden
         x = x.view(-1, self.k, self.k)
         return x
@@ -126,7 +147,8 @@ class STNkd(torch.nn.Module):
 class PointNetEncoder(torch.nn.Module):
     def __init__(self, global_feat=True, feature_transform=True, channel=3):
         super().__init__()
-        self.stn = STN3d(channel)
+        # self.stn = STN3d(channel)
+        self.stn = STNkd(3)
 
         self.conv1 = torch.nn.Conv1d(channel, 64, 1)
         self.conv1b = torch.nn.Conv1d(64, 64, 1)
@@ -153,27 +175,30 @@ class PointNetEncoder(torch.nn.Module):
 
         # Spatial Transformer: Calculate the rotation matrix and apply it to
         # the x,y,z points while leaving the extra features untransformed
-        trans = self.stn(x, mask=mask)
+        # trans = self.stn(x, mask=mask)
+        trans = self.stn(x[:, :3, :], mask=mask)
 
         x = x.transpose(2, 1)
-        # if D > 3:
+
+        # Separate the features from the positions
         feature = x[:, :, 3:]
         x = x[:, :, :3]
         
         x = torch.bmm(x, trans)
-        
-        # if D > 3:
+
+        # Put the features back with the rotated positions 
         x = torch.cat([x, feature], dim=2)
         
         x = x.transpose(2, 1)
 
 
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
+        # x = F.relu(self.bn1(self.conv1(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv1, self.bn1, mask=mask)
         
-        x = F.relu(self.bn1b(self.conv1b(x)))
-        x = x*mask[:, None, :]
+        # x = F.relu(self.bn1b(self.conv1b(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv1b, self.bn1b, mask=mask)
 
         # Feature transform layer
         # if self.feature_transform:
@@ -186,15 +211,17 @@ class PointNetEncoder(torch.nn.Module):
 
         pointfeat = x
 
-        x = F.relu(self.bn2a(self.conv2a(x)))
-        x = x*mask[:, None, :]
+        # x = F.relu(self.bn2a(self.conv2a(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv2a, self.bn2a, mask=mask)
         
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
-        x = self.bn3(self.conv3(x))
-        x = x*mask[:, None, :]
-        # x = zeros_tensors(x, npts)
+        # x = F.relu(self.bn2(self.conv2(x)))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv2, self.bn2, mask=mask)
+
+        # x = self.bn3(self.conv3(x))
+        # x = x*mask[:, None, :]
+        x = _layer_bn_relu_mask(x, self.conv3, self.bn3, mask=mask)
 
         # Max pooling???
         x = torch.max(x, 2, keepdim=True)[0]
@@ -216,7 +243,7 @@ class PointNet(torch.nn.Module):
         self.fc2 = torch.nn.Linear(512, 256)
         self.fc3 = torch.nn.Linear(256, nclass)
 
-        self.dropout = torch.nn.Dropout(0.4)
+        self.dropout = torch.nn.Dropout(DEFAULT_DROPOUT)
 
         self.bn1 = torch.nn.BatchNorm1d(512)
         self.bn2 = torch.nn.BatchNorm1d(256)
@@ -226,26 +253,27 @@ class PointNet(torch.nn.Module):
         self.add_nhits = add_nhits
 
     def forward(self, x, mask=None):
+        B, D, N = x.shape
+
+        if D != 4:
+            raise ValueError(f"Expected 4 channels (x, y, z, energy), got {D}")
 
         if mask is None:
             # mask, npts = generate_mask(x)
-            B, D, N = x.shape
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
         # Get the number of hits for each entry in the batch
-        tmp = x[:, 3, :]
-        nhits = torch.count_nonzero(tmp, dim=1)
+        energy = x[:, 3, :]
+        nhits = torch.count_nonzero(energy, dim=1)
 
         x, trans, trans_feat = self.feat(x, mask=mask)
 
-
         # Appending the nhits value to the input to the linear layers
         if self.add_nhits:
-            nhits2 = nhits.unsqueeze(1)
-            x = torch.cat([x, nhits2], dim=1)
+            nhits_expanded = nhits.unsqueeze(1)
+            x = torch.cat([x, nhits_expanded], dim=1)
 
         # Already max pooled over points so mask is now irrelevant
-
         x = self.relu(self.bn1(self.fc1(x)))
         x = self.relu(self.bn2(self.dropout(self.fc2(x))))
         x = self.fc3(x)
@@ -260,7 +288,7 @@ def feature_transform_regularizer(trans):
     return loss
 
 class PointNetLoss(torch.nn.Module):
-    def __init__(self, loss_fn, mat_diff_loss_scale=0.001):
+    def __init__(self, loss_fn, mat_diff_loss_scale=DEFAULT_MAT_DIFF_SCALE):
         super().__init__()
         self.loss_fn = loss_fn
         self.mat_diff_loss_scale = mat_diff_loss_scale

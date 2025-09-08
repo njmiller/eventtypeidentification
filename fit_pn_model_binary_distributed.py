@@ -244,7 +244,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
             model.eval()
             with torch.no_grad():
                 logits, trans_feat = model(test1)
-                print("VALS FOR LOADING TEST:", logits, torch.sum(trans_feat))
+                print("VALS FOR C++ TEST:", logits.item(), torch.sum(trans_feat).item())
             model.train()
         print("")
 
