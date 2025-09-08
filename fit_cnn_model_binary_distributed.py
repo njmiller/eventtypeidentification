@@ -21,7 +21,8 @@ import torchmetrics
 import torchmetrics.classification
 
 # from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
-from models.models import gen_testnet1, VoxelDataset, gen_claudenet1
+from models.models import gen_testnet1, gen_testnet2
+from datasets import AMEGOXVoxelDataset
 
 class AccuracyLogits(torchmetrics.Metric):
     def __init__(self, **kwargs):
@@ -88,7 +89,7 @@ def load_dataset(fn, extra=False):
     # the same seed is used for all processes.
     split = 0.9
 
-    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=extra)
+    dataset_all = AMEGOXVoxelDataset(event_hits, event_types, dims, ranges, extra=extra)
     ntrain = int(len(dataset_all)*split)
     nval = len(dataset_all) - ntrain
     train_dataset, val_dataset = random_split(dataset_all, [ntrain, nval],
@@ -345,7 +346,7 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
     split = 0.9
 
     # dataset_all = VoxelDataset(event_hits, event_types, dims, ranges)
-    dataset_all = VoxelDataset(event_hits, event_types, dims, ranges, extra=True, experiment="AMEGOX")
+    dataset_all = AMEGOXVoxelDataset(event_hits, event_types, dims, ranges, extra=True, experiment="AMEGOX")
 
     # nsub = 3000
     # dataset_all, _ = random_split(dataset_all, [nsub, len(dataset_all)-nsub])
@@ -367,10 +368,10 @@ def load_and_train(rank, world_size, fn, dir="./", label="", modelname='ComPairN
             print("Initializing PyTorch binary classification version of TestNet1...")
         # model = TestNet1(input_shape=(XBins, YBins, ZBins))
         model = gen_testnet1(input_shape=(XBins, YBins, ZBins))
-    elif modelname == "ClaudeNet":
+    elif modelname == "TestNet2":
         if rank == 0:
-            print("Initializing PyTorch binary classification version of model suggested by Claude AI")
-        model = gen_claudenet1(input_shape=(XBins, YBins, ZBins))
+            print("Initializing PyTorch binary classification version of model suggested by AI...")
+        model = gen_testnet2(input_shape=(XBins, YBins, ZBins))
     else:
         raise ValueError("Bad modelname")
 

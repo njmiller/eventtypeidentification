@@ -99,6 +99,7 @@ def get_amegox_xybin(xpos, ypos, nbins):
     return xbins, ybins
 """
 
+'''
 class VoxelDataset(Dataset):
     def __init__(self, data, labels, dims, ranges, extra=False, experiment=None):
         self.data = data  # x, y, z, e for each hit in each event
@@ -178,6 +179,7 @@ class VoxelDataset(Dataset):
             return tensor, label_out, len(data_idx)
         else:
             return tensor, label_out
+'''
 
 def gen_testnet1(input_shape=(110, 110, 48)):
 
@@ -276,7 +278,7 @@ def gen_testnet_mult(input_shape=(110, 110, 48)):
     all_layers = conv_list + linear_list
     return torch.nn.Sequential(*all_layers)
 
-def gen_claudenet1(input_shape=(110, 110, 48)):
+def gen_testnet2(input_shape=(110, 110, 48)):
 
     relu = torch.nn.ReLU()
 
