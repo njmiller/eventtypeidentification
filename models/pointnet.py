@@ -31,7 +31,10 @@ def generate_mask(x):
     return mask, npts_all
 
 def generate_mask_simple(x):
-    return (x[:, -1, :] != 0).int()
+    mask = (x[:, -1, :] != 0).int()
+    npts_all = torch.sum(x, 1)
+
+    return mask, npts_all
 
 class STN3d(torch.nn.Module):
     def __init__(self, channel):
@@ -52,35 +55,29 @@ class STN3d(torch.nn.Module):
         self.bn4 = torch.nn.BatchNorm1d(512)
         self.bn5 = torch.nn.BatchNorm1d(256)
 
+        self.register_buffer("identify_3x3", torch.eye(3).view(1, 9))
+
     def forward(self, x, mask=None):
         B, D, N = x.size()
         
         if mask is None:
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
-        # x = self.relu(self.bn1(self.conv1(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv1, self.bn1, mask=mask)
-
-        # x = self.relu(self.bn2(self.conv2(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv2, self.bn2, mask=mask)
-
-        # x = self.relu(self.bn3(self.conv3(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv3, self.bn3, mask=mask)
 
         x = torch.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
 
-        # x = self.relu(self.bn4(self.fc1(x)))
-        # x = self.relu(self.bn5(self.fc2(x)))
         x = _layer_bn_relu_mask(x, self.fc1, self.bn4)
         x = _layer_bn_relu_mask(x, self.fc2, self.bn5)
         x = self.fc3(x)
 
         # iden = torch.tensor([1, 0, 0, 0, 1, 0, 0, 0, 1], dtype=torch.float32, device=x.device).view(1, 9).repeat(B, 1)
-        iden = torch.eye(3, dtype=torch.float32, device=x.device).flatten().view(1, 9).repeat(B, 1)
+        # iden = torch.eye(3, dtype=torch.float32, device=x.device).flatten().view(1, 9).repeat(B, 1)
+        iden = self.identity_3x3.repeat(B, 1)
+
         x = x + iden
         x = x.view(-1, 3, 3)
         return x
@@ -116,30 +113,21 @@ class STNkd(torch.nn.Module):
         if mask is None:
             mask = torch.ones([B, N], dtype=torch.int, device=x.device)
 
-        # x = self.relu(self.bn1(self.conv1(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv1, self.bn1, mask=mask)
 
-        # x = self.relu(self.bn2(self.conv2(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv2, self.bn2, mask=mask)
         
-        # x = self.relu(self.bn3(self.conv3(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv3, self.bn3, mask=mask)
 
         x = torch.max(x, 2, keepdim=True)[0]
         x = x.view(-1, 1024)
 
-        # x = self.relu(self.bn4(self.fc1(x)))
-        # x = self.relu(self.bn5(self.fc2(x)))
         x = _layer_bn_relu_mask(x, self.fc1, self.bn4)
         x = _layer_bn_relu_mask(x, self.fc2, self.bn5)
 
         x = self.fc3(x)
 
-        # iden = torch.eye(self.k, dtype=torch.float32, device=x.device).view(1, self.k * self.k).repeat(B, 1)
-        iden = self.identity_kxk.repeat(B, 1).to(x.device)
+        iden = self.identity_kxk.repeat(B, 1)
         x = x + iden
         x = x.view(-1, self.k, self.k)
         return x
@@ -192,40 +180,30 @@ class PointNetEncoder(torch.nn.Module):
         x = x.transpose(2, 1)
 
 
-        # x = F.relu(self.bn1(self.conv1(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv1, self.bn1, mask=mask)
-        
-        # x = F.relu(self.bn1b(self.conv1b(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv1b, self.bn1b, mask=mask)
 
         # Feature transform layer
-        # if self.feature_transform:
-        trans_feat = self.fstn(x, mask=mask)
-        x = x.transpose(2, 1)
-        x = torch.bmm(x, trans_feat)
-        x = x.transpose(2, 1)
-        # else:
-            # trans_feat = None
+        if self.feature_transform:
+            trans_feat = self.fstn(x, mask=mask)
+            x = x.transpose(2, 1)
+            x = torch.bmm(x, trans_feat)
+            x = x.transpose(2, 1)
+        else:
+            trans_feat = None
 
         pointfeat = x
 
-        # x = F.relu(self.bn2a(self.conv2a(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv2a, self.bn2a, mask=mask)
-        
-        # x = F.relu(self.bn2(self.conv2(x)))
-        # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv2, self.bn2, mask=mask)
 
         # x = self.bn3(self.conv3(x))
         # x = x*mask[:, None, :]
         x = _layer_bn_relu_mask(x, self.conv3, self.bn3, mask=mask)
 
-        # Max pooling???
-        x = torch.max(x, 2, keepdim=True)[0]
-        x = x.view(-1, 1024)
+        # Max pooling over the full dimension so we can just use max function
+        # x = F.max_pool2d(x, kernel_size=[1, N]).squeeze()
+        x = torch.max(x, 2)[0]
 
         if self.global_feat:
             return x, trans, trans_feat
@@ -257,6 +235,9 @@ class PointNet(torch.nn.Module):
 
         if D != 4:
             raise ValueError(f"Expected 4 channels (x, y, z, energy), got {D}")
+        
+        if mask is not None and mask.shape != (B, N):
+            raise ValueError("Wrong shape for input mask")
 
         if mask is None:
             # mask, npts = generate_mask(x)
@@ -274,8 +255,10 @@ class PointNet(torch.nn.Module):
             x = torch.cat([x, nhits_expanded], dim=1)
 
         # Already max pooled over points so mask is now irrelevant
-        x = self.relu(self.bn1(self.fc1(x)))
-        x = self.relu(self.bn2(self.dropout(self.fc2(x))))
+        # x = self.relu(self.bn1(self.fc1(x)))
+        # x = self.relu(self.bn2(self.dropout(self.fc2(x))))
+        x = self.dropout(_layer_bn_relu_mask(x, self.fc1, self.bn1))
+        x = self.dropout(_layer_bn_relu_mask(x, self.fc2, self.bn2))
         x = self.fc3(x)
 
         return x, trans_feat
@@ -283,7 +266,6 @@ class PointNet(torch.nn.Module):
 def feature_transform_regularizer(trans):
     d = trans.size()[1]
     I = torch.eye(d, device=trans.device)[None, :, :]
-    # I = I.to(trans.device)
     loss = torch.mean(torch.norm(torch.bmm(trans, trans.transpose(2, 1)) - I, dim=(1, 2)))
     return loss
 
