@@ -1,5 +1,7 @@
 """Code to run inference on a Cosima file using a PointNet model."""
 import argparse
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
