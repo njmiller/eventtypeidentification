@@ -45,10 +45,6 @@ def main():
     model.load_state_dict(torch.load("/data/slag2/njmille2/AMEGOXData0p5/test_torch_model_params_20250714_pn_inf.pth"))
     model.eval()
             
-    # tot = torch.zeros(5, dtype=torch.int)
-    # good_pn = torch.zeros(5, dtype=torch.int)
-    # good_revan = torch.zeros(5, dtype=torch.int)
-
     nbins = 50
     corr_both = torch.zeros([nbins, 2, 2], dtype=torch.int)
     corr_pn = torch.zeros([nbins, 2], dtype=torch.int)

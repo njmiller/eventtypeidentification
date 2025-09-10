@@ -171,11 +171,11 @@ def test(model, device, test_loader, loss_fn, epoch):
         percent = 100. * acc
         print(f'\nTest set: Loss: {test_loss:.4f}, Acc: {correct}/{len(test_loader.dataset)} '
               f'({percent:.0f}%), Prec: {ps_all}, Rec: {rs_all}')
-        fn = "probs_targets_epoch"+str(epoch)+".pt"
-        torch.save({ 
-            'probs': probs_all,
-            'targets': targets_all
-        }, fn)
+        # fn = "probs_targets_epoch"+str(epoch)+".pt"
+        # torch.save({ 
+            # 'probs': probs_all,
+            # 'targets': targets_all
+        # }, fn)
 
     return correct, test_loss
 
