@@ -4,6 +4,8 @@ import argparse
 import os
 import sys
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 
 from torch.utils.data import DataLoader, Dataset
@@ -21,8 +23,8 @@ import torchmetrics
 import torchmetrics.classification
 
 # from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
-from models.models import gen_testnet1, gen_testnet2
-from datasets import AMEGOXVoxelDataset
+from models.cnn import gen_testnet1, gen_testnet2
+from data.datasets import AMEGOXVoxelDataset
 
 class AccuracyLogits(torchmetrics.Metric):
     def __init__(self, **kwargs):

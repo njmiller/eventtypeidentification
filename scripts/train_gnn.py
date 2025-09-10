@@ -4,9 +4,10 @@ import argparse
 import os
 import sys
 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import torch
 
-# from torch.utils.data import Dataset
 import torch.optim as optim
 from torch.optim.lr_scheduler import StepLR
 
@@ -21,8 +22,7 @@ import torch_geometric.transforms as T
 from torch_geometric.nn import GCNConv, global_mean_pool
 from torch_geometric.loader import DataLoader
 
-from models.models_gnn_claude import GraphClassifier, GCN, GraphDataset
-# from models.models_gnn import GraphDataset
+from models.gnn import GraphClassifier, GCN, GraphDataset
 
 import torchmetrics
 import torchmetrics.classification

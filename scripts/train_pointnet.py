@@ -2,6 +2,9 @@ import pickle
 import datetime
 import argparse
 import os
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
@@ -22,7 +25,8 @@ import torchmetrics.classification
 
 # from fit_cnn_model_binary import VoxelDataset, TestNet1, ComPairNet
 from models.pointnet import PointNet, PointNetLoss
-from datasets import AMEGOXPointCloud, pc_collate_fn
+from data.datasets import AMEGOXPointCloud, pc_collate_fn
+
 
 MASTER_PORT = "12355"
 TRAIN_VAL_SPLIT = 0.9

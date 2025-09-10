@@ -10,8 +10,7 @@ from lightning.pytorch.utilities.types import TRAIN_DATALOADERS
 
 from torchmetrics import Accuracy, Recall, Precision, ConfusionMatrix
 
-from fit_cnn_model_binary import ComPairNet, TestNet1, VoxelDataset
-from models import gen_testnet1
+from models.cnn import ComPairNet, TestNet1, VoxelDataset, gen_testnet1
 
 class EventTypeIdentification(L.LightningModule):
     def __init__(self, input_shape=(110, 110, 48)):

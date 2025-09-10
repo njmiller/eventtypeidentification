@@ -8,8 +8,6 @@ import glob
 
 import numpy as np
 
-# import matplotlib.pyplot as plt
-
 import ROOT as M
 
 def load_data(fn, event_hits, maxevents, minhits=1, maxhits=None, detectortype=None, maxclass=None,

@@ -3,6 +3,9 @@ import argparse
 from functools import partial
 import os
 import datetime
+import sys
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -14,7 +17,7 @@ import torch
 import optax
 
 # TODO: Copy model to EquinoxCNN and copy VoxelDataset code here
-from datasets import AMEGOXVoxelDataset
+from data.datasets import AMEGOXVoxelDataset
     
 devices = jax.local_devices()
 n_devices = jax.local_device_count()
