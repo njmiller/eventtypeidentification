@@ -14,16 +14,11 @@ M.gSystem.Load("$(MEGALIB)/lib/libMEGAlib.so")
 
 def main(fn, fn_out, geometry_name, model_weights):
 
-    # fn = '/data/slag2/njmille2/AMEGOXData0p5/AMEGOX_1MeV_50MeV_flat.p1.inc10.id1.sim.gz'
-    # fn_out = './event_type.etp'
-
     f = open(fn_out, "w")
 
     G = M.MGlobal()
     G.Initialize()
 
-    # geometry_name = "~/ComPair/Geometry/AMEGO_Midex/AmegoXBase.geo.setup"
-    
     # Load geometry:
     Geometry = M.MDGeometryQuest()
     if Geometry.ScanSetupFile(M.MString(geometry_name)) == True:
@@ -38,9 +33,10 @@ def main(fn, fn_out, geometry_name, model_weights):
         quit()
 
     model = PointNet()
-    # model.load_state_dict(torch.load("/data/slag2/njmille2/AMEGOXData0p5/test_torch_model_params_20250714_pn_inf.pth"))
     model.load_state_dict(torch.load(model_weights))
+    # model = torch.jit.load(model_traced)
     model.eval()
+
 
     i = 0
     while True:
