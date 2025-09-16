@@ -13,7 +13,7 @@ from models.pointnet import PointNet
     
 M.gSystem.Load("$(MEGALIB)/lib/libMEGAlib.so")
 
-def main(fn, fn_out, geometry_name, model_weights):
+def main(fn, fn_out, geometry_name, model_traced):
 
     f = open(fn_out, "w")
 
@@ -34,10 +34,9 @@ def main(fn, fn_out, geometry_name, model_weights):
         quit()
 
     model = PointNet()
-    model.load_state_dict(torch.load(model_weights))
-    # model = torch.jit.load(model_traced)
+    # model.load_state_dict(torch.load(model_weights))
+    model = torch.jit.load(model_traced)
     model.eval()
-
 
     i = 0
     while True:
@@ -56,15 +55,16 @@ def main(fn, fn_out, geometry_name, model_weights):
         if i % 4000 == 0:
             print(f"{i}: STUFF")
         
-        is_good, reason = is_good_event(Event)
-        
         # Get the event type for the sim event only if
         # event_type = get_event_type(Event)
 
-        if is_good:
+        if is_good_event(Event):
             data_input = process_event(Event)
+            
+            B, _, N = data_input.shape
+            mask = torch.ones([B, N], dtype=torch.int)
 
-            logits, _ = model(data_input)
+            logits, _ = model(data_input, mask)
 
             prob = torch.sigmoid(logits)
 
@@ -118,16 +118,30 @@ def get_acc_revan(event_tra, event_type):
         else:
             return 0, event_type_revan, is_mixed
             
-
 def is_good_event(event):
     
     nhits = event.GetNHTs()
     
     minhits = 2
     if nhits < minhits:
-        return False, 0
+        return False
 
-    return True, -1
+    xpos = event.GetIAAt(1).GetPosition().X()
+    ypos = event.GetIAAt(1).GetPosition().Y()
+    zpos = event.GetIAAt(1).GetPosition().Z()
+
+    # Checking for first interaction in the tracker volume
+    if abs(xpos) < 43.74 and abs(ypos) < 43.74 and zpos >= -36.432 and zpos <= 22.068:
+        return True
+
+    # Not in the tracker volume, return False
+    return False
+
+    # detectortype = 1 
+    # if (detectortype is not None) and event.GetIAAt(1).GetDetectorType() != detectortype:
+        # return False, 1
+
+    # return True, -1
 
 def get_event_type(event):
         
@@ -167,8 +181,8 @@ def is_mixed(event):
 
 if __name__ == '__main__':
     fn = '/data/slag2/njmille2/AMEGOXData0p5/AMEGOX_1MeV_50MeV_flat.p1.inc10.id1.sim.gz'
-    fn_out = 'test2.etp'
+    fn_out = 'test3.etp'
     geometry_name = "~/ComPair/Geometry/AMEGO_Midex/AmegoXBase.geo.setup"
-    model_weights = "/data/slag2/njmille2/AMEGOXData0p5/test_torch_model_params_20250714_pn_inf.pth"
-
-    main(fn, fn_out, geometry_name, model_weights)
+    # model_weights = "/data/slag2/njmille2/AMEGOXData0p5/test_torch_model_params_20250714_pn_inf.pth"
+    model_traced = "../pointnet_traced.pt"
+    main(fn, fn_out, geometry_name, model_traced)

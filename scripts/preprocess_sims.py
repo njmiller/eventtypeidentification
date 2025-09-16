@@ -72,8 +72,14 @@ def load_data(fn, event_hits, maxevents, minhits=1, maxhits=None, detectortype=N
             print("Processing event", i_tmp, len(event_hits[0]), len(event_hits[1]))
 
         # Type = 0
-        if (detectortype is not None) and Event.GetIAAt(1).GetDetectorType() != detectortype:
+        # Reject if first interaction is not in the tracker
+        # if (detectortype is not None) and Event.GetIAAt(1).GetDetectorType() != detectortype:
+            # continue
+
+        # Reject if not enough nhits or first interaction is not in the tracker volume
+        if not is_good_event_amegox(Event):
             continue
+
 
         if Event.GetNIAs() > 0:
             if Event.GetIAAt(1).GetProcess() == M.MString("COMP"):
@@ -89,7 +95,7 @@ def load_data(fn, event_hits, maxevents, minhits=1, maxhits=None, detectortype=N
 
         nhits = Event.GetNHTs()
         
-        # Reject if too little number of hits
+        # Reject if too little number of hits though should already have been checked
         if nhits < minhits:
             continue
 
@@ -207,6 +213,30 @@ def gen_dataset(event_hits, nevents, split):
     return dataset_hits, dataset_types
     # return (event_hits_train, event_types_train), (event_hits_test, event_types_test)
 
+def is_good_event_amegox(event):
+    
+    nhits = event.GetNHTs()
+    
+    minhits = 2
+    if nhits < minhits:
+        return False
+
+    xpos = event.GetIAAt(1).GetPosition().X()
+    ypos = event.GetIAAt(1).GetPosition().Y()
+    zpos = event.GetIAAt(1).GetPosition().Z()
+
+    # Checking for first interaction in the tracker volume
+    if abs(xpos) < 43.74 and abs(ypos) < 43.74 and zpos >= -36.432 and zpos <= 22.068:
+        return True
+
+    # Anything not in the tracker volume should return False
+    return False
+
+    # detectortype = 1 
+    # if (detectortype is not None) and event.GetIAAt(1).GetDetectorType() != detectortype:
+        # return False
+    
+    # return True
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Preprocess Cosima Sims')
