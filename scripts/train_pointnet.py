@@ -31,7 +31,7 @@ from data.datasets import AMEGOXPointCloud, pc_collate_fn
 MASTER_PORT = "12355"
 TRAIN_VAL_SPLIT = 0.9
 DEFAULT_SEED = 42
-DEFAULT_EPOCHS = 100
+DEFAULT_EPOCHS = 200
 DEFAULT_LR = 0.001
 LOG_INTERVAL = 50
 
@@ -262,7 +262,7 @@ def train_all(rank, model, params, train_dataset, test_dataset, dir='./', label=
             f.write("\n")
 
 
-def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
+def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800, weights=None):
     ddp_setup(rank, world_size)
 
     if rank == 0:
@@ -290,6 +290,8 @@ def load_and_train(rank, world_size, fn, dir="./", label="", batch_size=800):
 
 
     model = PointNet(add_nhits=False)
+    if weights is not None:
+        model.load_state_dict(torch.load(weights, weights_only=True))
 
     time0 = datetime.datetime.now()
     train_all(rank, model, params, train_dataset, val_dataset, dir=dir, label=label)
@@ -309,9 +311,11 @@ if __name__ == "__main__":
                         help='Directory for output data')
     parser.add_argument("-batch", dest='batch', action='store', type=int, default=800,
                         help="Batch size")
+    parser.add_argument("-weights", dest='weights', action='store',
+                        help="Initial weights")
     
     args = parser.parse_args()
 
     world_size = torch.cuda.device_count()
-    args_input=(world_size, args.fn, args.dir, args.label, args.batch)
+    args_input=(world_size, args.fn, args.dir, args.label, args.batch, args.weights)
     mp.spawn(load_and_train, args=args_input, nprocs=world_size)
