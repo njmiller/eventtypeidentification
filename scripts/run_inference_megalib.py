@@ -76,6 +76,8 @@ def main(fn, fn_out, geometry_name, model_traced):
                 tp_out = 1-prob.item()
 
             print(f"SE\nID {id}\nET {et_out}\nTP {tp_out}", file=f)
+        else:
+            print(f"SE\nID {id}\nUN\nTP 0", file=f)
 
     f.close()
 
@@ -180,8 +182,9 @@ def is_mixed(event):
     return False
 
 if __name__ == '__main__':
-    fn = '/data/slag2/njmille2/AMEGOXData0p5/AMEGOX_1MeV_50MeV_flat.p1.inc10.id1.sim.gz'
-    fn_out = 'test3.etp'
+    #fn = '/data/slag2/njmille2/AMEGOXData0p5/AMEGOX_1MeV_50MeV_flat.p1.inc10.id1.sim.gz'
+    fn = '/data/slag2/njmille2/AMEGOXData0p5/test.sim'
+    fn_out = 'test.etp'
     geometry_name = "~/ComPair/Geometry/AMEGO_Midex/AmegoXBase.geo.setup"
     # model_weights = "/data/slag2/njmille2/AMEGOXData0p5/test_torch_model_params_20250714_pn_inf.pth"
     model_traced = "../pointnet_traced.pt"
